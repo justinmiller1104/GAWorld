@@ -15,11 +15,28 @@ Duration model (contract in tests/test_mcf_time_use.py):
   end, so the whole gap is attributed to the previous category (leisure
   timestamps do not pin anything, since drifting into free time is exactly
   the case where the switch moment is unobservable).
-- The last episode of a day extends to 24:00 in its own category — except a
-  sleep episode directly following paid_work: after a work shift the sleep
-  timestamp ends the recorded day, and the remainder is unrecorded (unknown).
-- Overlapping timestamps clamp to zero; days are scored independently, so a
-  day's last episode never bleeds into the next day.
+- The last episode of a day extends to 24:00 in its own category when it is
+  sleep (the last evening observation of sleep implies the resident sleeps on
+  through midnight) — except a sleep episode directly following paid_work:
+  after a work shift the sleep timestamp ends the recorded day, and the
+  remainder is unrecorded (unknown). A non-sleep last episode vouches for at
+  most 2*tick_minutes of its category when it is observed late in the day
+  (>= 18:00 — the evening after it is unobserved and flagged as an incomplete
+  day, not padded into the category); an earlier last observation means the
+  log stopped mid-activity, and the recorded activity persists to 24:00.
+- 24h accounting basis: a day's minutes span its full calendar day. The
+  head of a day (00:00 -> its first episode) is the tail of the previous
+  night's sleep: it is attributed to the current day in the previous
+  recorded day's last category when that is sleep, and otherwise (first
+  observed day, or the previous day did not end in sleep) defaults to sleep
+  unless the day's own first episode is already sleep — an evening-only log
+  that opens on sleep leaves the pre-midnight span genuinely unknown.
+  Without this carry, ~7–8h of overnight sleep per day would vanish between
+  day N's 24:00 tail and day N+1's first episode (~07:30).
+- Out-of-order timestamps: inversions larger than an hour mean the record
+  is unordered — the day is sorted by time and the sorted record is treated
+  as contiguous (deterministic, lossless). Smaller inversions are write
+  jitter: record order is kept and negative differences clamp to zero.
 """
 
 from __future__ import annotations
@@ -62,39 +79,49 @@ UNKNOWN = "unknown"
 MINUTES_PER_DAY = 24 * 60
 
 # 2024 national time-use survey (公报第二号), verified in RESULT-3188 §5.
+# survey_basis: the bulletin reports weekly averages over all days, so a
+# weekday-only simulation is not directly comparable without a warning.
 # paid_work is a participants-basis average -> score only over employed
 # agents. study is inflated by 6-17-year-olds in the survey sample ->
 # excluded from scoring by default.
 TARGETS_2024: dict[str, dict[str, object]] = {
-    "sleep": {"minutes": 586, "basis": "all_persons"},
-    "personal_care": {"minutes": 56, "basis": "all_persons"},
-    "meals": {"minutes": 103, "basis": "all_persons"},
-    "paid_work": {"minutes": 383, "basis": "participants"},
-    "housework": {"minutes": 77, "basis": "all_persons"},
-    "leisure": {"minutes": 153, "basis": "all_persons"},
-    "socializing": {"minutes": 18, "basis": "all_persons"},
-    "commuting": {"minutes": 50, "basis": "all_persons"},
+    "sleep": {"minutes": 586, "basis": "all_persons", "survey_basis": "weekly_average"},
+    "personal_care": {"minutes": 56, "basis": "all_persons", "survey_basis": "weekly_average"},
+    "meals": {"minutes": 103, "basis": "all_persons", "survey_basis": "weekly_average"},
+    "paid_work": {"minutes": 383, "basis": "participants", "survey_basis": "weekly_average"},
+    "housework": {"minutes": 77, "basis": "all_persons", "survey_basis": "weekly_average"},
+    "leisure": {"minutes": 153, "basis": "all_persons", "survey_basis": "weekly_average"},
+    "socializing": {"minutes": 18, "basis": "all_persons", "survey_basis": "weekly_average"},
+    "commuting": {"minutes": 50, "basis": "all_persons", "survey_basis": "weekly_average"},
     "study": {
         "minutes": 107,
         "basis": "child_inflated",
         "comparable_by_default": False,
+        "survey_basis": "weekly_average",
     },
 }
 
 # 2018 城镇 column (附表1 / 附表3, RESULT-3188 §5) as the robustness vector.
+# survey_basis: 2018 reports workday and restday averages separately, so an
+# explicit day_types flag is required to pick the matching column.
 # The 2018 bulletin reports 个人卫生护理+用餐 as one combined 154-min bucket;
 # it is kept under meals with that caveat.
 TARGETS_2018: dict[str, dict[str, object]] = {
-    "sleep": {"minutes": 556, "basis": "all_persons"},
-    "meals": {"minutes": 154, "basis": "all_persons"},  # combined with personal care
-    "paid_work": {"minutes": 457, "basis": "participants"},
-    "housework": {"minutes": 79, "basis": "all_persons"},
-    "leisure": {"minutes": 250, "basis": "all_persons"},
-    "commuting": {"minutes": 44, "basis": "all_persons"},
+    "sleep": {"minutes": 556, "basis": "all_persons", "survey_basis": "workday_restday_split"},
+    "meals": {
+        "minutes": 154,
+        "basis": "all_persons",
+        "survey_basis": "workday_restday_split",
+    },  # combined with personal care
+    "paid_work": {"minutes": 457, "basis": "participants", "survey_basis": "workday_restday_split"},
+    "housework": {"minutes": 79, "basis": "all_persons", "survey_basis": "workday_restday_split"},
+    "leisure": {"minutes": 250, "basis": "all_persons", "survey_basis": "workday_restday_split"},
+    "commuting": {"minutes": 44, "basis": "all_persons", "survey_basis": "workday_restday_split"},
     "study": {
         "minutes": 29,
         "basis": "child_inflated",
         "comparable_by_default": False,
+        "survey_basis": "workday_restday_split",
     },
 }
 
@@ -135,6 +162,8 @@ class ScoreResult:
     overall_error: float
     coverage: float
     leftover_minutes: float
+    per_agent_day: dict[int, dict[int, dict[str, float]]] | None = None
+    uncertainty_warnings: list[str] | None = None
 
 
 def classify_activity(text: str) -> tuple[str | None, str]:
@@ -202,9 +231,10 @@ def compute_daily_minutes(
 ) -> dict[int, dict[int, dict[str, int]]]:
     """Infer per-agent, per-day minutes per category from episode timestamps.
 
-    Episodes are processed in the order given (out-of-order timestamps clamp
-    to zero rather than being reordered). Only days with episodes appear in
-    the result; each day is bounded at 24:00.
+    Episodes are sorted by time within each agent-day (deterministic handling
+    of out-of-order records; overlaps then clamp to zero). Only days with
+    episodes appear in the result; each day spans the full 24h calendar day
+    (see the module docstring for the head/tail accounting basis).
     """
     by_agent_day: dict[tuple[int, int], list[tuple[int, str | None]]] = defaultdict(list)
     for raw in episodes:
@@ -213,28 +243,74 @@ def compute_daily_minutes(
         by_agent_day[(ep.agent_id, ep.day)].append((_parse_clock(ep.time), category))
 
     result: dict[int, dict[int, dict[str, int]]] = {}
-    for (agent_id, day), stamps in by_agent_day.items():
-        minutes = _empty_minutes()
-        for index in range(len(stamps) - 1):
-            start, category = stamps[index]
-            next_start, next_category = stamps[index + 1]
-            gap = max(next_start - start, 0)
-            bucket = category or UNKNOWN
-            if next_category == category or gap <= 2 * tick_minutes or next_category in _BOUNDARY_ANCHORED:
-                minutes[bucket] += gap
+    # Process each agent's days in ascending order so the overnight head of
+    # a day can inherit the previous recorded day's terminal category.
+    by_agent: dict[int, list[int]] = defaultdict(list)
+    for agent_id, day in by_agent_day:
+        by_agent[agent_id].append(day)
+    for agent_id in sorted(by_agent):
+        prev_last_category: str | None = None
+        for day in sorted(by_agent[agent_id]):
+            stamps = by_agent_day[(agent_id, day)]
+            # Determinism contract: timestamps inverted by more than an hour
+            # mean the file is unordered — sort the whole day and treat the
+            # sorted record as contiguous. Smaller inversions are write
+            # jitter: keep record order and clamp negatives to zero.
+            contiguous = False
+            if any(b[0] < a[0] for a, b in zip(stamps, stamps[1:])):
+                max_inversion = max(a[0] - b[0] for a, b in zip(stamps, stamps[1:]) if b[0] < a[0])
+                if max_inversion > 60:
+                    stamps = sorted(stamps, key=lambda s: s[0])
+                    contiguous = True
+            minutes = _empty_minutes()
+            head = stamps[0][0]
+            if head > 0:
+                # Overnight carry: the pre-first-episode span is the tail of
+                # the previous night's sleep (or, on a first/partial day,
+                # default sleep — unless the log itself opens on sleep, which
+                # leaves the pre-midnight span genuinely unknown).
+                if prev_last_category == "sleep" or stamps[0][1] != "sleep":
+                    minutes["sleep"] += head
+                else:
+                    minutes[UNKNOWN] += head
+            for index in range(len(stamps) - 1):
+                start, category = stamps[index]
+                next_start, next_category = stamps[index + 1]
+                gap = max(next_start - start, 0)
+                bucket = category or UNKNOWN
+                if contiguous:
+                    # Repaired ordering: the sorted record is trusted, gaps
+                    # belong to the previous category.
+                    minutes[bucket] += gap
+                elif next_category == category or gap <= 2 * tick_minutes or next_category in _BOUNDARY_ANCHORED:
+                    minutes[bucket] += gap
+                else:
+                    minutes[bucket] += min(gap, 2 * tick_minutes)
+                    minutes[UNKNOWN] += gap - 2 * tick_minutes
+            last_start, last_category = stamps[-1]
+            prev_category = stamps[-2][1] if len(stamps) > 1 else None
+            tail = MINUTES_PER_DAY - last_start
+            # Sleep right after a work shift ends the recorded day at its
+            # timestamp; the remaining evening is unrecorded.
+            if last_category == "sleep" and prev_category == "paid_work":
+                minutes[UNKNOWN] += tail
+            elif last_category == "sleep":
+                # Evening sleep implies the resident sleeps on through
+                # midnight: the tail stays sleep (cross-midnight accounting).
+                minutes["sleep"] += tail
             else:
-                minutes[bucket] += min(gap, 2 * tick_minutes)
-                minutes[UNKNOWN] += gap - 2 * tick_minutes
-        last_start, last_category = stamps[-1]
-        prev_category = stamps[-2][1] if len(stamps) > 1 else None
-        tail = MINUTES_PER_DAY - last_start
-        # Sleep right after a work shift ends the recorded day at its
-        # timestamp; the remaining evening is unrecorded.
-        if last_category == "sleep" and prev_category == "paid_work":
-            minutes[UNKNOWN] += tail
-        else:
-            minutes[last_category or UNKNOWN] += tail
-        result.setdefault(agent_id, {})[day] = minutes
+                # A non-sleep last episode vouches for at most 2*tick of its
+                # category when the observation is late in the day (the
+                # evening after it is unobserved, not leisure); an early last
+                # observation means the log simply stopped, and the recorded
+                # activity persists to 24:00.
+                if last_start >= 18 * 60:
+                    minutes[last_category or UNKNOWN] += min(tail, 2 * tick_minutes)
+                    minutes[UNKNOWN] += max(tail - 2 * tick_minutes, 0)
+                else:
+                    minutes[last_category or UNKNOWN] += tail
+            prev_last_category = last_category
+            result.setdefault(agent_id, {})[day] = minutes
     return result
 
 
@@ -253,40 +329,77 @@ def coverage(result: Mapping[int, Mapping[int, Mapping[str, float]]]) -> float:
     return classified / total
 
 
+def _normalize_daily(
+    daily: Mapping[int, Mapping[int, Mapping[str, float] | list[Mapping[str, object]]]],
+    tick_minutes: int = 10,
+) -> dict[int, dict[int, dict[str, float]]]:
+    """Coerce raw episode lists into per-category minutes (score convenience)."""
+    normalized: dict[int, dict[int, dict[str, float]]] = {}
+    for agent_id, days in daily.items():
+        normalized[agent_id] = {}
+        for day, value in days.items():
+            if isinstance(value, list):
+                computed = compute_daily_minutes(value, tick_minutes).get(agent_id, {}).get(day)
+                normalized[agent_id][day] = {k: float(v) for k, v in (computed or _empty_minutes()).items()}
+            else:
+                normalized[agent_id][day] = {k: float(v) for k, v in value.items()}
+    return normalized
+
+
 def score_against_targets(
-    daily: Mapping[int, Mapping[int, Mapping[str, float]]],
+    daily: Mapping[int, Mapping[int, Mapping[str, float] | list[Mapping[str, object]]]],
     employed_agents: Iterable[int] | None = None,
+    day_types: Mapping[int, Mapping[int, str]] | None = None,
 ) -> ScoreResult:
     """Compare simulated daily minutes against TARGETS_2024.
 
-    paid_work is scored only over employed agents (participants basis);
-    study is excluded by default (child_inflated basis). ``overall_error`` is
-    the mean absolute error across comparable categories; ``leftover_minutes``
-    is the mean unknown time per agent-day — unknown time is reported, never
-    dropped.
+    paid_work is scored only over employed agents (participants basis); when
+    ``day_types`` maps agent -> day -> "workday"/"restday", paid_work is
+    scored only over workdays so a weekday-only sim is never silently diluted
+    by rest days (and vice versa: 2024 targets are weekly averages — see
+    ``survey_basis`` metadata). study is excluded by default
+    (child_inflated basis). ``overall_error`` is the mean absolute error
+    across comparable categories; ``leftover_minutes`` is the mean unknown
+    time per agent-day — unknown time is reported, never dropped.
+
+    ``uncertainty_warnings`` flags low classified coverage (< 0.85) and
+    incomplete days (unattributed minutes); ``per_agent_day`` exposes the
+    per-agent per-category minutes so external analyses (e.g. the 24h-budget
+    paid_work/leisure coupling) are possible without re-deriving them.
     """
     employed = set(employed_agents or ())
-    agent_days: list[tuple[int, Mapping[str, float]]] = [
-        (agent_id, minutes) for agent_id, days in daily.items() for minutes in days.values()
+    normalized = _normalize_daily(daily)
+    agent_days: list[tuple[int, int, Mapping[str, float]]] = [
+        (agent_id, day, minutes)
+        for agent_id, days in normalized.items()
+        for day, minutes in days.items()
     ]
 
     def mean_over(pairs: list[float]) -> float:
         return sum(pairs) / len(pairs) if pairs else 0.0
+
+    def is_workday(agent_id: int, day: int) -> bool:
+        return day_types is None or day_types.get(agent_id, {}).get(day) == "workday"
 
     per_category: dict[str, dict[str, float]] = {}
     for category in CATEGORIES:
         if category == "study":
             continue
         if category == "paid_work":
-            values = [minutes.get(category, 0) for agent_id, minutes in agent_days if agent_id in employed]
+            values = [
+                minutes.get(category, 0)
+                for agent_id, day, minutes in agent_days
+                if agent_id in employed and is_workday(agent_id, day)
+            ]
         else:
-            values = [minutes.get(category, 0) for _, minutes in agent_days]
+            values = [minutes.get(category, 0) for _, _, minutes in agent_days]
         sim = mean_over([float(v) for v in values])
         target = float(TARGETS_2024[category]["minutes"])
         per_category[category] = {
             "sim": sim,
             "target": target,
             "error": abs(sim - target),
+            "n_agent_days": float(len(values)),
         }
 
     if not agent_days:
@@ -295,15 +408,31 @@ def score_against_targets(
             overall_error=0.0,
             coverage=0.0,
             leftover_minutes=0.0,
+            per_agent_day={},
+            uncertainty_warnings=[],
         )
 
+    warnings: list[str] = []
+    for agent_id, day, minutes in agent_days:
+        unattributed = float(minutes.get(UNKNOWN, 0))
+        if unattributed > 0:
+            warnings.append(
+                f"incomplete day: agent {agent_id} day {day} has {unattributed:.0f} "
+                "unattributed minutes (gaps or unobserved head/tail)"
+            )
+    cov = coverage(normalized)
+    if cov < 0.85:
+        warnings.append(f"low coverage: only {cov:.2f} of inferred minutes are classified (< 0.85)")
+
     overall_error = mean_over([spec["error"] for spec in per_category.values()])
-    leftover = mean_over([float(minutes.get(UNKNOWN, 0)) for _, minutes in agent_days])
+    leftover = mean_over([float(minutes.get(UNKNOWN, 0)) for _, _, minutes in agent_days])
     return ScoreResult(
         per_category=per_category,
         overall_error=overall_error,
-        coverage=coverage(daily),
+        coverage=cov,
         leftover_minutes=leftover,
+        per_agent_day=normalized,
+        uncertainty_warnings=warnings,
     )
 
 

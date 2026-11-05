@@ -394,9 +394,11 @@ def test_score_directory_scores_every_agent_file(tmp_path):
     )
     result = score_directory(tmp_path, employed_agent_ids=[31], tick_minutes=10)
     _score_result_shape(result)
-    # Both agents contributed; sleep 00:00–08:00 = 480 for each, so the
-    # all-persons sleep mean is 480; paid_work (08:00–09:00 = 60) counts only
-    # agent 31's day → sim 60, error |60 − 383| = 323.
-    assert result.per_category["sleep"]["sim"] == 480
+    # Both agents contributed; sleep 00:00–08:00 = 480 plus the 09:00→24:00
+    # evening tail (900) now carried as sleep — the sleep-after-work artifact
+    # was removed in the Phase 0.9 preflight, so sleep sim = 480 + 900 = 1380;
+    # paid_work (08:00–09:00 = 60) counts only agent 31's day → sim 60,
+    # error |60 − 383| = 323.
+    assert result.per_category["sleep"]["sim"] == 1380
     assert result.per_category["paid_work"]["sim"] == 60
     assert result.per_category["paid_work"]["error"] == 323

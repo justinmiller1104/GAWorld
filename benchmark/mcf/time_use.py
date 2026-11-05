@@ -17,9 +17,11 @@ Duration model (contract in tests/test_mcf_time_use.py):
   the case where the switch moment is unobservable).
 - The last episode of a day extends to 24:00 in its own category when it is
   sleep (the last evening observation of sleep implies the resident sleeps on
-  through midnight) — except a sleep episode directly following paid_work:
-  after a work shift the sleep timestamp ends the recorded day, and the
-  remainder is unrecorded (unknown). A non-sleep last episode vouches for at
+  through midnight). The earlier sleep-after-paid_work exception (a work-shift
+  tail recorded as unrecorded) was removed in the Phase 0.9 preflight: it
+  contradicted the overnight head-carry, which attributes the same span on
+  the next day as sleep — the artifact systematically deflated sleep for
+  employed agents. A non-sleep last episode vouches for at
   most 2*tick_minutes of its category when it is observed late in the day
   (>= 18:00 — the evening after it is unobserved and flagged as an incomplete
   day, not padded into the category); an earlier last observation means the
@@ -37,6 +39,22 @@ Duration model (contract in tests/test_mcf_time_use.py):
   is unordered — the day is sorted by time and the sorted record is treated
   as contiguous (deterministic, lossless). Smaller inversions are write
   jitter: record order is kept and negative differences clamp to zero.
+
+Change record (Phase 0.9 preflight, BRIEF-MCF-phase09-green):
+- Sleep-after-work artifact removed: a sleep episode directly following
+  paid_work no longer ends the recorded day; the evening tail is sleep like
+  any other evening (consistent with the overnight head-carry).
+- Keyword precision: the bare ``吃`` keyword is applied only when it does
+  not start a non-meal compound (吃亏, 吃惊, ...).
+- Zero-employed participants: with no employed agent-days, paid_work is
+  reported unscored (sim/error = None, n_agent_days = 0) plus an uncertainty
+  warning — never a silent 383-minute error.
+- Exploratory basis: scoring paid_work with an explicit day_types map marks
+  the entry ``basis="exploratory"`` (workday subset vs weekly-average target).
+- ``ages_6_plus`` caveat added to the child-inflated study target.
+- Tick-mismatch guard: a splittable gap (> 2*tick_minutes) that is not a
+  multiple of tick_minutes raises ValueError instead of silently inflating
+  ``unknown`` — the file was emitted at a different tick.
 """
 
 from __future__ import annotations
@@ -98,6 +116,7 @@ TARGETS_2024: dict[str, dict[str, object]] = {
         "basis": "child_inflated",
         "comparable_by_default": False,
         "survey_basis": "weekly_average",
+        "ages_6_plus": True,  # the inflated scope covers 6-year-olds and up
     },
 }
 
@@ -130,7 +149,7 @@ _KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("paid_work", ("上班", "工作", "加班", "办公", "开会", "写报告")),
     ("commuting", ("通勤", "上班路上", "坐车", "乘地铁", "乘公交")),
     ("sleep", ("睡觉", "午休", "睡前", "入睡", "补觉")),
-    ("meals", ("用餐", "吃饭", "吃早饭", "吃午饭", "吃晚饭", "吃夜宵", "进食", "吃")),
+    ("meals", ("用餐", "吃饭", "吃早饭", "吃午饭", "吃晚饭", "吃夜宵", "进食")),
     ("personal_care", ("洗漱", "洗澡", "洗脸", "刷牙", "梳妆")),
     ("housework", ("家务", "做饭", "买菜", "打扫", "洗衣", "收拾")),
     ("leisure", ("娱乐", "休闲", "散步", "健身", "看电视", "游戏", "运动", "放松")),
@@ -143,6 +162,11 @@ _KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 # do not pin: drifting into leisure is exactly when the switch moment is
 # unobservable.
 _BOUNDARY_ANCHORED: frozenset[str] = frozenset({"sleep", "paid_work", "meals", "personal_care"})
+
+# Bare ``吃`` is a meal marker only when not starting a non-meal compound
+# (吃亏 / 吃惊 / 吃苦 / 吃力 / ...). Specific meal keywords are matched first
+# in _KEYWORDS, so this is the last-resort precision fallback.
+_BARE_CHI_NON_MEAL = "亏惊苦力劲香醋货透紧不开"
 
 _AGENT_ID_RE = re.compile(r"agent_(\d+)")
 
@@ -158,7 +182,7 @@ class Episode:
 
 @dataclass(frozen=True)
 class ScoreResult:
-    per_category: dict[str, dict[str, float]]
+    per_category: dict[str, dict[str, object]]
     overall_error: float
     coverage: float
     leftover_minutes: float
@@ -175,6 +199,9 @@ def classify_activity(text: str) -> tuple[str | None, str]:
         for keyword in keywords:
             if keyword in cleaned:
                 return category, "keyword"
+    for index, char in enumerate(cleaned):
+        if char == "吃" and (index + 1 >= len(cleaned) or cleaned[index + 1] not in _BARE_CHI_NON_MEAL):
+            return "meals", "keyword"
     return None, "unknown"
 
 
@@ -285,18 +312,24 @@ def compute_daily_minutes(
                 elif next_category == category or gap <= 2 * tick_minutes or next_category in _BOUNDARY_ANCHORED:
                     minutes[bucket] += gap
                 else:
+                    # Tick-mismatch guard: a large gap that isn't a multiple
+                    # of tick_minutes means the file was emitted at a
+                    # different tick — fail loudly instead of silently
+                    # inflating ``unknown``.
+                    if gap % tick_minutes:
+                        raise ValueError(
+                            f"tick mismatch: agent {agent_id} day {day} has a "
+                            f"{gap}-minute gap not divisible by tick_minutes={tick_minutes}; "
+                            "the episode file was likely emitted at a different tick"
+                        )
                     minutes[bucket] += min(gap, 2 * tick_minutes)
                     minutes[UNKNOWN] += gap - 2 * tick_minutes
             last_start, last_category = stamps[-1]
-            prev_category = stamps[-2][1] if len(stamps) > 1 else None
             tail = MINUTES_PER_DAY - last_start
-            # Sleep right after a work shift ends the recorded day at its
-            # timestamp; the remaining evening is unrecorded.
-            if last_category == "sleep" and prev_category == "paid_work":
-                minutes[UNKNOWN] += tail
-            elif last_category == "sleep":
+            if last_category == "sleep":
                 # Evening sleep implies the resident sleeps on through
-                # midnight: the tail stays sleep (cross-midnight accounting).
+                # midnight: the tail stays sleep (cross-midnight accounting;
+                # the sleep-after-work exception was removed — see docstring).
                 minutes["sleep"] += tail
             else:
                 # A non-sleep last episode vouches for at most 2*tick of its
@@ -381,7 +414,7 @@ def score_against_targets(
     def is_workday(agent_id: int, day: int) -> bool:
         return day_types is None or day_types.get(agent_id, {}).get(day) == "workday"
 
-    per_category: dict[str, dict[str, float]] = {}
+    per_category: dict[str, dict[str, object]] = {}
     for category in CATEGORIES:
         if category == "study":
             continue
@@ -391,16 +424,32 @@ def score_against_targets(
                 for agent_id, day, minutes in agent_days
                 if agent_id in employed and is_workday(agent_id, day)
             ]
+            if not values:
+                # Participants basis with zero employed agent-days: a mean
+                # over nothing would silently read as a 383-minute error.
+                per_category[category] = {
+                    "sim": None,
+                    "target": float(TARGETS_2024[category]["minutes"]),
+                    "error": None,
+                    "n_agent_days": 0.0,
+                }
+                continue
         else:
             values = [minutes.get(category, 0) for _, _, minutes in agent_days]
         sim = mean_over([float(v) for v in values])
         target = float(TARGETS_2024[category]["minutes"])
-        per_category[category] = {
+        spec: dict[str, object] = {
             "sim": sim,
             "target": target,
             "error": abs(sim - target),
             "n_agent_days": float(len(values)),
         }
+        if category == "paid_work" and day_types is not None:
+            # Workday-only scoring compares a workday subset against the
+            # weekly-average target: exploratory, not a like-for-like check.
+            spec["basis"] = "exploratory"
+            spec["basis_note"] = "scored on workdays only vs a weekly-average survey target"
+        per_category[category] = spec
 
     if not agent_days:
         return ScoreResult(
@@ -426,6 +475,11 @@ def score_against_targets(
 
     overall_error = mean_over([spec["error"] for spec in per_category.values()])
     leftover = mean_over([float(minutes.get(UNKNOWN, 0)) for _, _, minutes in agent_days])
+    if per_category["paid_work"]["n_agent_days"] == 0:
+        warnings.append(
+            "paid_work: zero employed agent-days scored; the participants-basis "
+            "target (383 min) is reported unscored, not as an error"
+        )
     return ScoreResult(
         per_category=per_category,
         overall_error=overall_error,

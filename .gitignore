@@ -246,3 +246,15 @@ fos/test_results/
 # Runtime test outputs (never commit)
 /test_results/
 /data/gaworld_runs/
+
+# Phase 1.1 hygiene: generated outputs & agent scratch (see docs/MCF_GAWORLD.md + REPO_HYGIENE_AUDIT.md)
+/outputs/
+/docs/proposals/results/
+TASK-*.progress
+tmp/
+task_plan.md
+progress.md
+findings.md
+read.doc
+readme_wsy.md
+plan-with-files.skill

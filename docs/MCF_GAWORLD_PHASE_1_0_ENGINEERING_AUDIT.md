@@ -151,3 +151,25 @@ Unchanged from Phase 0.9 §6 except where noted:
    Stage-1-scale run, cohort expansion multiplies wall-clock linearly; a concurrency
    design that parallelizes *inside the tick loop* (not just routine/digest) is the only
    real lever and does not exist yet.
+
+## Phase 1.1 correction — Stage 1 serial-cost range recomputed
+
+The §1.3 headline "serial 14–20 h" does not follow from the Phase 0.9 inputs
+(10–60k calls at 2.5–3.5 s/call). Recomputation:
+
+- 10,000 × 2.5 s = **7 h** — lower bound assumes the low call inventory
+  (~0.5 calls/agent-tick: action calls only on active ticks, gated rows firing
+  rarely) *and* the fastest latency.
+- 60,000 × 3.5 s = **58 h** — upper bound assumes the high inventory
+  (3 calls/agent-tick: perception + action + retry) *and* the slowest latency.
+
+The old 14–20 h is exactly 20,736 agent-ticks × 2.5–3.5 s — i.e. it implicitly
+assumed **1 call per agent-tick (20,736 calls)**, a rate that appears nowhere in
+the Phase 0.9 call-site inventory (0.5–3 calls/tick).
+
+**Corrected planning range (default config, serial): 7–58 h**, spanning the
+inventory bounds. Because the true calls/agent-tick is unmeasured, the range is
+wide; the canary's *measured* per-call latency and measured calls/agent-tick
+(§2) supersede every assumed latency above, and Stage 1 wall-clock must be
+re-planned as (measured rate) × 20,736 × (measured latency) once it runs. The
+wider range strengthens the §2 canary gate: no Stage 1 commitment before it.

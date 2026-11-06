@@ -55,6 +55,28 @@ Change record (Phase 0.9 preflight, BRIEF-MCF-phase09-green):
 - Tick-mismatch guard: a splittable gap (> 2*tick_minutes) that is not a
   multiple of tick_minutes raises ValueError instead of silently inflating
   ``unknown`` — the file was emitted at a different tick.
+
+Change record (Phase 1.0 GREEN, BRIEF-MCF-phase10-green / TASK-3220):
+- Sleep-tail corroboration: a last sleep record evidences "sleeping on
+  through midnight" only when it is an evening one (>= 18:00) or a >= 10:00
+  record outside a work shift; an early-morning (<= 09:00) or post-work
+  (previous episode paid_work) sleep record vouches for at most 2*tick and
+  the unobserved tail becomes ``unknown``. The Phase 0.9 expectation that a
+  lone 09:00 sleep record credits 900 min to midnight (sleep sim == 1380)
+  was over-attribution and is corrected (locked test updated to 500).
+- First-day head honesty: a first recorded day defaults its pre-midnight
+  head to sleep only when the day ends in a corroborated sleep tail (the
+  log spans the night); otherwise the head is genuinely ``unknown``.
+- Empty comparison: scoring zero agent-days now warns "no agent-days
+  scored" instead of returning a silent ``overall_error == 0.0``; the
+  mean error skips categories that are reported unscored (error None).
+- style_fit_amplitude range pinned: ``ADMISSIBLE_STYLE_FIT = (0.10, 0.40)``
+  with ``validate_style_fit()``; the Phase 0.9 "high = 0.9" is separated as
+  ``STRESS_STYLE_FIT`` — a stress point, never an admissible amplitude.
+- Survey-comparison honesty gates: ``MIN_COMPARISON_DAYS = 7`` and
+  ``MIN_COMPARISON_POPULATION = 20``; ``ScoreResult.frontier_valid`` is
+  False (with explanatory warnings) for sub-threshold comparisons — they
+  stay scored but are marked exploratory, never like-for-like.
 """
 
 from __future__ import annotations
@@ -67,6 +89,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "ADMISSIBLE_STYLE_FIT",
+    "MIN_COMPARISON_DAYS",
+    "MIN_COMPARISON_POPULATION",
+    "STRESS_STYLE_FIT",
     "CATEGORIES",
     "TARGETS_2018",
     "TARGETS_2024",
@@ -78,6 +104,7 @@ __all__ = [
     "load_episodes",
     "score_against_targets",
     "score_directory",
+    "validate_style_fit",
 ]
 
 # The nine survey categories (unknown is a scoring bucket, not a category).
@@ -170,6 +197,40 @@ _BARE_CHI_NON_MEAL = "亏惊苦力劲香醋货透紧不开"
 
 _AGENT_ID_RE = re.compile(r"agent_(\d+)")
 
+# style_fit_amplitude admissible band (Phase 1.0): personality may explain at
+# most 10–40% of behavioural variance (gaworld/settings/personality.py
+# docstring; scripts/big5_effect_ceiling.py operational ceiling). 0.9 is a
+# STRESS value only — the Phase 0.9 spec's "high = 0.9" was never an admissible
+# manipulation point (personality explaining >~15% of variance is louder than
+# the literature supports).
+ADMISSIBLE_STYLE_FIT: tuple[float, float] = (0.10, 0.40)
+STRESS_STYLE_FIT: tuple[float, ...] = (0.9,)
+
+# Survey-comparison honesty gates (Phase 1.0): the 2024/2018 targets are
+# weekly averages, so a comparison needs >= 7 consecutive simulated days and
+# a cohort of >= 20 residents before its overall_error is frontier-valid.
+# Sub-threshold comparisons are still scored, but flagged exploratory
+# (frontier_valid=False + warnings), never silently reported as like-for-like.
+# ~553 agent-days give ±10-min precision on a 120-min-SD category mean; the
+# 20×7 floor (~140 agent-days) is the minimum, ~80 agents is survey-grade.
+MIN_COMPARISON_DAYS = 7
+MIN_COMPARISON_POPULATION = 20
+
+
+def validate_style_fit(amplitude: float) -> None:
+    """Raise ValueError unless ``amplitude`` is inside ADMISSIBLE_STYLE_FIT.
+
+    Stress values (STRESS_STYLE_FIT) are deliberately rejected: they are for
+    break-point probes, not admissible manipulation points.
+    """
+    lo, hi = ADMISSIBLE_STYLE_FIT
+    if not lo <= amplitude <= hi:
+        raise ValueError(
+            f"style_fit amplitude {amplitude} outside the admissible band "
+            f"[{lo}, {hi}]; stress values {STRESS_STYLE_FIT} are not admissible "
+            "manipulation points"
+        )
+
 
 @dataclass(frozen=True)
 class Episode:
@@ -188,6 +249,10 @@ class ScoreResult:
     leftover_minutes: float
     per_agent_day: dict[int, dict[int, dict[str, float]]] | None = None
     uncertainty_warnings: list[str] | None = None
+    # False when the duration/population gates (MIN_COMPARISON_DAYS /
+    # MIN_COMPARISON_POPULATION) are not met: the comparison is exploratory,
+    # not a like-for-like check against weekly-average survey targets.
+    frontier_valid: bool = True
 
 
 def classify_activity(text: str) -> tuple[str | None, str]:
@@ -289,14 +354,41 @@ def compute_daily_minutes(
                 if max_inversion > 60:
                     stamps = sorted(stamps, key=lambda s: s[0])
                     contiguous = True
+            # Sleep-tail corroboration (Phase 1.0): the last sleep record only
+            # evidences "sleeping on through midnight" when it is an evening
+            # one (>= 18:00), or a >= 10:00 record outside a work shift. An
+            # early-morning record (<= 09:00 — possibly still the night, but
+            # indistinguishable from a nap/glitch) or a mid-day sleep directly
+            # after paid_work (a work-break nap) vouches for at most 2*tick;
+            # the rest of the tail is unobserved and must land in ``unknown``,
+            # never silently in sleep.
+            last_start, last_category = stamps[-1]
+            prev_category = stamps[-2][1] if len(stamps) > 1 else None
+            if last_category == "sleep":
+                if last_start >= 18 * 60:
+                    sleep_tail_full = True
+                elif last_start < 10 * 60:
+                    sleep_tail_full = False
+                else:
+                    sleep_tail_full = prev_category != "paid_work"
+            else:
+                sleep_tail_full = False
             minutes = _empty_minutes()
             head = stamps[0][0]
             if head > 0:
                 # Overnight carry: the pre-first-episode span is the tail of
-                # the previous night's sleep (or, on a first/partial day,
-                # default sleep — unless the log itself opens on sleep, which
-                # leaves the pre-midnight span genuinely unknown).
-                if prev_last_category == "sleep" or stamps[0][1] != "sleep":
+                # the previous night's sleep when the previous recorded day
+                # ended in sleep. On a FIRST recorded day the head defaults
+                # to sleep only when the day itself ends in a corroborated
+                # sleep tail (evidence the log spans the night); otherwise —
+                # including a log that opens on sleep, or one whose last
+                # record is an uncorroborated nap — the head is genuinely
+                # unknown.
+                if prev_last_category == "sleep":
+                    minutes["sleep"] += head
+                elif stamps[0][1] == "sleep":
+                    minutes[UNKNOWN] += head
+                elif prev_last_category is not None or sleep_tail_full:
                     minutes["sleep"] += head
                 else:
                     minutes[UNKNOWN] += head
@@ -324,13 +416,19 @@ def compute_daily_minutes(
                         )
                     minutes[bucket] += min(gap, 2 * tick_minutes)
                     minutes[UNKNOWN] += gap - 2 * tick_minutes
-            last_start, last_category = stamps[-1]
             tail = MINUTES_PER_DAY - last_start
-            if last_category == "sleep":
-                # Evening sleep implies the resident sleeps on through
-                # midnight: the tail stays sleep (cross-midnight accounting;
-                # the sleep-after-work exception was removed — see docstring).
+            if last_category == "sleep" and sleep_tail_full:
+                # Corroborated evening sleep implies the resident sleeps on
+                # through midnight: the tail stays sleep (cross-midnight
+                # accounting; the sleep-after-work exception was removed —
+                # see docstring).
                 minutes["sleep"] += tail
+            elif last_category == "sleep":
+                # Uncorroborated sleep record (early-morning or work-break
+                # nap): at most 2*tick stays sleep; the unobserved remainder
+                # is unknown, never assumed sleep.
+                minutes["sleep"] += min(tail, 2 * tick_minutes)
+                minutes[UNKNOWN] += max(tail - 2 * tick_minutes, 0)
             else:
                 # A non-sleep last episode vouches for at most 2*tick of its
                 # category when the observation is late in the day (the
@@ -458,10 +556,30 @@ def score_against_targets(
             coverage=0.0,
             leftover_minutes=0.0,
             per_agent_day={},
-            uncertainty_warnings=[],
+            uncertainty_warnings=["no agent-days scored: an empty comparison cannot be "
+                                  "read as a zero-error fit"],
+            frontier_valid=False,
         )
 
     warnings: list[str] = []
+    # Survey-comparison honesty gates: the targets are weekly averages, so a
+    # sub-threshold duration or cohort is flagged exploratory, not reported
+    # as a like-for-like overall_error.
+    n_agents = len(normalized)
+    n_days = max(len(days) for days in normalized.values())
+    frontier_valid = n_days >= MIN_COMPARISON_DAYS and n_agents >= MIN_COMPARISON_POPULATION
+    if n_days < MIN_COMPARISON_DAYS:
+        warnings.append(
+            f"comparison spans only {n_days} day(s) < MIN_COMPARISON_DAYS={MIN_COMPARISON_DAYS}; "
+            "weekly-average survey targets need >= 7 simulated days (or an explicit "
+            "workday/restday split) — marked exploratory, not frontier-valid"
+        )
+    if n_agents < MIN_COMPARISON_POPULATION:
+        warnings.append(
+            f"cohort of {n_agents} agent(s) < MIN_COMPARISON_POPULATION={MIN_COMPARISON_POPULATION}; "
+            "a small cohort cannot ground population-level category means — marked "
+            "exploratory, not frontier-valid"
+        )
     for agent_id, day, minutes in agent_days:
         unattributed = float(minutes.get(UNKNOWN, 0))
         if unattributed > 0:
@@ -473,7 +591,9 @@ def score_against_targets(
     if cov < 0.85:
         warnings.append(f"low coverage: only {cov:.2f} of inferred minutes are classified (< 0.85)")
 
-    overall_error = mean_over([spec["error"] for spec in per_category.values()])
+    overall_error = mean_over(
+        [spec["error"] for spec in per_category.values() if spec["error"] is not None]
+    )
     leftover = mean_over([float(minutes.get(UNKNOWN, 0)) for _, _, minutes in agent_days])
     if per_category["paid_work"]["n_agent_days"] == 0:
         warnings.append(
@@ -487,6 +607,7 @@ def score_against_targets(
         leftover_minutes=leftover,
         per_agent_day=normalized,
         uncertainty_warnings=warnings,
+        frontier_valid=frontier_valid,
     )
 
 

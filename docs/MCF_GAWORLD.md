@@ -167,6 +167,17 @@ window_start_min, window_end_min, days=None)` flags episode records whose
 time falls outside the run's observation window or whose `day` is not one
 of the run's days (schedule-consistency guard).
 
+#### 2.1.5 Nighttime behaviour — defect D1 fixed, D2/D3 retained (Phase 1.8 Part D)
+
+Of the three nighttime gating defects identified in the genuine-behaviour
+investigation (RESULT-nighttime.md), defect D1 — the head-of-day sleep
+coverage hole — is fixed: `ensure_sleep_in_schedule` now stretches the
+inserted rest window back over midnight (a `00:00` sleep slot derived from
+the schedule's own slots), so `get_activity_for_time` never falls back to
+个人时间 before the first morning slot. D2 (travel-labelled activities
+bypass the time-fit keyword gate) and D3 (no hour gate on movement /
+venue-open) are retained as documented limitations.
+
 ### 2.2 Valid dimensions
 
 - **Paid-work vs leisure/social time-use error** — the two-dimensional frontier

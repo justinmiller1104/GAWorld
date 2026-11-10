@@ -340,6 +340,11 @@ def ensure_sleep_in_schedule(
                 break
 
     schedule = list(schedule) + [(candidate, "睡前")]
+    # The day grid starts at 00:00, so without head coverage the whole
+    # 00:00–first-slot window falls into the 个人时间 fallback and agents
+    # wander all night; stretch the rest window back over midnight.
+    if "00:00" not in {t for t, _ in schedule}:
+        schedule.append(("00:00", "睡前"))
     schedule.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
     return schedule
 

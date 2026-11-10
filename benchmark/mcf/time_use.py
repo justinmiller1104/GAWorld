@@ -40,6 +40,20 @@ Duration model (contract in tests/test_mcf_time_use.py):
   as contiguous (deterministic, lossless). Smaller inversions are write
   jitter: record order is kept and negative differences clamp to zero.
 
+Change record (Phase 1.7 Track 2, TASK-3439):
+- Structured-field classification (``classify_episode``): an in-transit
+  ``travel.status`` (departed/in_transit) or the writer's 乘坐…移动 ``action``
+  phrase maps to commuting; 「前往X」 labels that persist past arrival
+  (status arrived/stationary) are treated as stale and stay unknown; 「处理待办」
+  stays unknown unless a keyword on ``action``/``scheduled_activity`` fires.
+  Weak ``scheduled_activity`` keyword hits carry confidence
+  "scheduled_keyword". No sleep is ever inferred and gaps are never
+  stretched — the duration rules below are unchanged.
+- Contamination segmentation (``split_run_segments``): episode files are
+  per-agent and were appended across runs, producing duplicate ticks with
+  contradictory content. A backward clock jump of more than an hour starts a
+  new run segment; segments are returned separately, never silently merged.
+
 Change record (Phase 0.9 preflight, BRIEF-MCF-phase09-green):
 - Sleep-after-work artifact removed: a sleep episode directly following
   paid_work no longer ends the recorded day; the evening tail is sleep like
@@ -81,6 +95,7 @@ Change record (Phase 1.0 GREEN, BRIEF-MCF-phase10-green / TASK-3220):
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from collections import defaultdict
@@ -90,20 +105,22 @@ from pathlib import Path
 
 __all__ = [
     "ADMISSIBLE_STYLE_FIT",
+    "CATEGORIES",
     "MIN_COMPARISON_DAYS",
     "MIN_COMPARISON_POPULATION",
     "STRESS_STYLE_FIT",
-    "CATEGORIES",
     "TARGETS_2018",
     "TARGETS_2024",
     "Episode",
     "ScoreResult",
     "classify_activity",
+    "classify_episode",
     "compute_daily_minutes",
     "coverage",
     "load_episodes",
     "score_against_targets",
     "score_directory",
+    "split_run_segments",
     "validate_style_fit",
 ]
 
@@ -239,6 +256,12 @@ class Episode:
     time: str
     final_activity: str
     scheduled_activity: str = ""
+    # Structured activity evidence (Phase 1.7 Track 2). All optional with
+    # defaults so old callers and plain dicts keep working unchanged.
+    action: str = ""
+    location: str = ""
+    target_location: str = ""
+    travel: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -270,6 +293,100 @@ def classify_activity(text: str) -> tuple[str | None, str]:
     return None, "unknown"
 
 
+# An episode in transit (``travel.status`` departed/in_transit, or the
+# writer's own 乘坐…移动 action phrase) is commuting — the one activity the
+# log states machine-readably. Statuses arrived/stationary mean the agent is
+# already at the destination: the 「前往X」 label is stale there and the dwell
+# purpose is unlogged, so those ticks fall through to the weaker signals and
+# usually stay unknown. Purpose-unknown stays unknown: a POI-shaped location
+# or 「处理待办」 alone is never guessed into a category.
+_IN_TRANSIT_STATUSES = frozenset({"departed", "in_transit"})
+_TRAVEL_ACTION_RE = re.compile(r"乘坐.+移动")
+
+
+def _soft_coerce(ep: Episode | Mapping[str, object]) -> Episode:
+    """Coerce a possibly-partial dict (classification-only) into an Episode."""
+    if isinstance(ep, Episode):
+        return ep
+    travel = ep.get("travel")
+    return Episode(
+        agent_id=int(ep.get("agent_id", 0)),
+        day=int(ep.get("day", 1)),
+        time=str(ep.get("time", "00:00")),
+        final_activity=str(ep.get("final_activity", "")),
+        scheduled_activity=str(ep.get("scheduled_activity", "")),
+        action=str(ep.get("action", "")),
+        location=str(ep.get("location", "")),
+        target_location=str(ep.get("target_location", "")),
+        travel=travel if isinstance(travel, Mapping) else None,
+    )
+
+
+def classify_episode(ep: Episode | Mapping[str, object]) -> tuple[str | None, str]:
+    """Classify one episode using structured fields, conservatively.
+
+    Precedence (first match wins, deterministic):
+    1. ``travel.status`` in {departed, in_transit} -> commuting (machine-
+       readable, definitive).
+    2. ``final_activity`` keyword (the Phase 0.7 keyword table).
+    3. ``action`` matching 乘坐…移动 -> commuting (the writer's own travel
+       phrase; covers tick snapshots whose ``travel`` block was omitted).
+    4. ``scheduled_activity`` keyword — weak evidence (a schedule slot the
+       agent may have deviated from), reported with its own confidence so a
+       consumer can discount it.
+    5. unknown. 「处理待办」 and stale 「前往X」 labels are never promoted to a
+       category; sleep is never inferred (the log shows none).
+    """
+    episode = _soft_coerce(ep) if isinstance(ep, Mapping) else ep
+    travel = episode.travel or {}
+    status = str(travel.get("status", ""))
+    if status in _IN_TRANSIT_STATUSES:
+        return "commuting", "travel"
+    category, confidence = classify_activity(episode.final_activity)
+    if category is not None:
+        return category, confidence
+    if _TRAVEL_ACTION_RE.search(episode.action or ""):
+        return "commuting", "action_keyword"
+    category, _ = classify_activity(episode.scheduled_activity)
+    if category is not None:
+        return category, "scheduled_keyword"
+    return None, "unknown"
+
+
+def split_run_segments(episodes: Iterable[Episode | Mapping[str, object]]) -> list[list[Episode]]:
+    """Split an episode stream into per-run segments (contamination guard).
+
+    Episode files are per-agent and appended across runs; when a second run
+    restarts the clock the file holds duplicate ticks with contradictory
+    content. Deterministic detection: a backward jump of more than an hour
+    in ``time`` (or a decreasing ``day``) starts a new segment. Never merges
+    segments silently — callers score segments separately and choose one.
+    """
+    segments: list[list[Episode]] = []
+    current: list[Episode] = []
+    prev_day: int | None = None
+    prev_minute: int | None = None
+    for raw in episodes:
+        ep = _soft_coerce(raw)
+        minute = _parse_clock(ep.time)
+        reset = (
+            current
+            and (
+                ep.day < prev_day  # type: ignore[operator]
+                or (ep.day == prev_day and prev_minute - minute > 60)  # type: ignore[operator]
+            )
+        )
+        if reset:
+            segments.append(current)
+            current = []
+        current.append(ep)
+        prev_day = ep.day
+        prev_minute = minute
+    if current:
+        segments.append(current)
+    return segments
+
+
 def _parse_clock(time: str) -> int:
     hours, minutes = time.split(":")
     return int(hours) * 60 + int(minutes)
@@ -294,6 +411,10 @@ def load_episodes(path: str | Path) -> list[Episode]:
                     time=str(row["time"]),
                     final_activity=str(row.get("final_activity", "")),
                     scheduled_activity=str(row.get("scheduled_activity", "")),
+                    action=str(row.get("action", "")),
+                    location=str(row.get("location", "")),
+                    target_location=str(row.get("target_location", "")),
+                    travel=row.get("travel") if isinstance(row.get("travel"), Mapping) else None,
                 )
             )
     return episodes
@@ -302,12 +423,17 @@ def load_episodes(path: str | Path) -> list[Episode]:
 def _coerce_episode(ep: Episode | Mapping[str, object]) -> Episode:
     if isinstance(ep, Episode):
         return ep
+    travel = ep.get("travel")
     return Episode(
         agent_id=int(ep["agent_id"]),  # type: ignore[arg-type]
         day=int(ep["day"]),  # type: ignore[arg-type]
         time=str(ep["time"]),
         final_activity=str(ep.get("final_activity", "")),
         scheduled_activity=str(ep.get("scheduled_activity", "")),
+        action=str(ep.get("action", "")),
+        location=str(ep.get("location", "")),
+        target_location=str(ep.get("target_location", "")),
+        travel=travel if isinstance(travel, Mapping) else None,
     )
 
 
@@ -330,8 +456,8 @@ def compute_daily_minutes(
     """
     by_agent_day: dict[tuple[int, int], list[tuple[int, str | None]]] = defaultdict(list)
     for raw in episodes:
-        ep = _coerce_episode(raw)
-        category, _ = classify_activity(ep.final_activity)
+        ep = _soft_coerce(raw)
+        category, _ = classify_episode(ep)
         by_agent_day[(ep.agent_id, ep.day)].append((_parse_clock(ep.time), category))
 
     result: dict[int, dict[int, dict[str, int]]] = {}
@@ -349,8 +475,8 @@ def compute_daily_minutes(
             # sorted record as contiguous. Smaller inversions are write
             # jitter: keep record order and clamp negatives to zero.
             contiguous = False
-            if any(b[0] < a[0] for a, b in zip(stamps, stamps[1:])):
-                max_inversion = max(a[0] - b[0] for a, b in zip(stamps, stamps[1:]) if b[0] < a[0])
+            if any(b[0] < a[0] for a, b in itertools.pairwise(stamps)):
+                max_inversion = max(a[0] - b[0] for a, b in itertools.pairwise(stamps) if b[0] < a[0])
                 if max_inversion > 60:
                     stamps = sorted(stamps, key=lambda s: s[0])
                     contiguous = True

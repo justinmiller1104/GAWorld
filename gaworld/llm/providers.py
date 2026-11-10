@@ -3,6 +3,7 @@ import os
 import re
 import time
 import uuid
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -129,6 +130,29 @@ def _empty_completion(
 
 #: ``provider -> times the output cap cut a *non-empty* answer short``.
 _TRUNCATED: dict[str, int] = {}
+
+
+# Thread-local stash of the last blocking response's `usage` dict, so the
+# canary wrapper (outside the provider, `call_llm` returns a bare string) can
+# read observed token counts without re-issuing requests.
+_LAST_TOKEN_USAGE = threading.local()
+
+
+def pop_last_token_usage() -> dict[str, int] | None:
+    """Return and clear the last blocking response's usage for this thread.
+
+    Returns None when absent or malformed; never raises.
+    """
+    usage = getattr(_LAST_TOKEN_USAGE, "openai", None)
+    _LAST_TOKEN_USAGE.openai = None
+    if not isinstance(usage, dict):
+        return None
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    for value in (prompt_tokens, completion_tokens):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+    return dict(usage)
 
 
 def truncation_counts() -> dict[str, int]:
@@ -474,6 +498,7 @@ class OpenAIProvider(_CredentialProvider):
             data = r.json()
             choice = (data.get("choices") or [{}])[0]
             _note_truncated(f"openai:{self.model}", choice.get("finish_reason"), effective_max_tokens)
+            _LAST_TOKEN_USAGE.openai = data.get("usage")
             return data["choices"][0]["message"]["content"]
 
         if self.stream:

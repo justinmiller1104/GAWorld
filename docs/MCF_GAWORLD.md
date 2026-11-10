@@ -74,6 +74,32 @@ last-resort fallback); first-day head honesty; empty-comparison warning. The
 Phase 1.0 corrected expectation for the audited 1,380-minute scenario is
 **500** (480 anchored + 20 capped).
 
+**Phase 1.7 Track 2 correction (TASK-3439, offline, pilot16 logs):** the
+scorer previously read only `final_activity`, whose tick snapshots are
+「前往X」/「处理待办」 strings matching no keyword (coverage 0.11–0.14 on the
+pilot agents). The scorer now also reads the structured episode fields:
+an in-transit `travel.status` (departed/in_transit) or the writer's
+乘坐…移动 `action` phrase maps to commuting; stale 「前往X」 labels after
+arrival (status arrived/stationary) and 「处理待办」 stay unknown — no POI
+guessing, no sleep invention. `split_run_segments()` detects run
+contamination (episode files were appended across runs, duplicating 75
+ticks) and segments must be scored separately, never merged. On the
+pilot's live segment this lifts coverage to ~0.94, but ~90% of classified
+time is commuting — partly real (status-verified in-transit ticks), partly
+the locked early-stop rule persisting the last commuting label across the
+unobserved tail, and the agents travel through 00:00–07:00, so **sleep
+remains 0 everywhere and time use is still not survey-comparable from tick
+snapshots**. Smallest logging fix: write one machine-readable span record
+`{"agent_id", "day", "category", "start_min", "end_min", "mode"}` per
+activity transition (computable from `travel.status` transitions + the
+schedule slot), or add `activity_category` + `activity_started_at` to each
+tick snapshot; either way the episode file must be reset between runs.
+Benchmark-population limitation: an all-employed cohort (e.g. Stage 1's
+12) cannot ground the all-persons categories (leisure 153 / sleep 586 /
+housework 77 min are whole-population weekly averages); below
+`MIN_COMPARISON_POPULATION=20` results stay exploratory
+(`frontier_valid=False`).
+
 ### 2.2 Valid dimensions
 
 - **Paid-work vs leisure/social time-use error** — the two-dimensional frontier
@@ -158,6 +184,74 @@ The recommended architecture pair (**Verified (repo)**, Phase 0.6 §6):
   wrong (concurrency disabled by default; only routine+digest parallelize,
   < 1% of calls). Stage 1 wall-clock = (measured rate) × 20,736 × (measured
   latency), planned only after the canary passes.
+- Launch (opt-in, implemented in `benchmark/mcf/launch.py`; default runs are
+  unaffected — nothing in production imports the canary):
+
+  ```sh
+  # zero-inference plumbing check (no provider dispatch):
+  GAWORLD_CANARY=1 python -m benchmark.mcf.launch --dry-run
+  # live canary (requires verified pricing in CONFIG):
+  GAWORLD_CANARY=1 python -m benchmark.mcf.launch --authorize
+  ```
+
+  with `CONFIG["canary"] = {"enabled": true, "dry_run": false,
+  "est_tokens_in": …, "est_tokens_out": …, "pricing": {"<model>":
+  {"input": $/1M, "output": $/1M}}}` in `dashboard_config.json`. The wrapper
+  rebinds `gaworld.llm.providers.call_llm` (the one dispatch point every
+  kernel inference path uses) before the entry module is imported, and every
+  call is enforced pre-call against the 400-call / 250k-token / $1 / 30-min /
+  >5%-error caps; termination writes `output/canary/canary_manifest_*.json`
+  with the stop reason and partial usage. NOT yet executed.
+
+#### Token accounting: measured vs estimated (Phase 1.5 Track 2)
+
+LM Studio's OpenAI-compatible `/chat/completions` responses DO carry a
+`usage` object (`prompt_tokens` / `completion_tokens` / `total_tokens`) in
+blocking mode; streaming responses do not unless `stream_options:
+{"include_usage": true}` is requested (NOT enabled — it would change
+production behaviour). GAWorld's provider wrapper returns only the text, so
+the raw usage was previously DISCARDED: every token figure in the canary14
+manifests (`output/canary/`, `/home/justin/Documents/gaworld-agent-work/
+canary14/`) is the conservative 400-token/call ESTIMATE, never observed —
+40 calls × 500? or 280 × 400 = 112,000 etc. are all estimate-derived.
+
+As of Phase 1.5 Track 2 the provider stashes the blocking response's
+`usage` (`gaworld.llm.providers.pop_last_token_usage()`, thread-local) and
+the canary wrapper records OBSERVED counts for the ledger when present,
+falling back to the estimate (marked estimated) when the report is missing
+or malformed — never presenting an estimate as observed. Pre-call
+reservations stay estimate-based. The post-run manifest gains
+`token_accounting: {measured_calls, estimated_calls, tokens_measured,
+tokens_estimated}`. Tests: `tests/test_mcf_token_usage.py` (12 cases,
+mocked).
+
+#### Stage 1 execution readiness (Phase 1.5 Track 2)
+
+- **Budget enforcement** — solid: opt-in wrapper, pre-call check +
+  in-flight reservation, post-kill freeze + manifest, `restore()` always
+  rebinds the original provider.
+- **Resume** — **NOT reliable for mid-day kills; recommend
+  restart-per-run for Stage 1.** Checkpoints are day-boundary only
+  (`docs/CHECKPOINTS.md`): a kill between day boundaries leaves the
+  partial day's records already appended to the append-only recorders
+  (`gaworld/kernel/recorder.py`, `records/agent.step.jsonl`, timeline,
+  memory episodes — flushed per record, never rolled back; the checkpoint
+  explicitly excludes outputs). Restoring from the previous day's
+  checkpoint then RERUNS that partial day → duplicate activity records and
+  doubled timeline/episode entries for that day (sim-clock timestamps stay
+  consistent; duplication is the failure mode, not corruption). A kill
+  exactly at a day boundary is safe (no duplicates). Stage 1 canaries are
+  3 sim days ≈ 840 calls ≈ 45 min measured — cheaper to restart than to
+  audit de-duplication.
+- **Recommended Stage 1 execution caps** (from measured canary14 local
+  performance: avg 3.17 s/call, 0.97 calls/agent-tick, 280 calls/day-sim
+  at 2 agents × 144 ticks): Stage 1's 20,736 agent-ticks × 0.97 ≈ 20.1k
+  calls ≈ 17.7 h serial wall-clock (the doc's earlier 10k–60k range
+  brackets this); keep the existing 400-call/30-min canary caps for smoke
+  legs, and for full Stage 1 legs set `max_calls` ≈ 21,000, `max_tokens`
+  ≈ 11M (21k × 500 est), `max_elapsed_seconds` ≈ 80,000 (~22 h, 1.25× the
+  measured projection — no retry loops, so latency is the only variance),
+  `max_error_rate` 5% unchanged.
 
 ### Stage 1 — micro-run (cost + coverage) — spec LOCKED (Phase 0.9 §6, GO)
 

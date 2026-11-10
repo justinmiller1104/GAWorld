@@ -9,6 +9,7 @@ Pure and stdlib-only; no global state; never imported by production paths.
 
 from __future__ import annotations
 
+import itertools
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -67,7 +68,12 @@ class CanaryBudget:
         self._errors = 0
         self._cost = 0.0
         self._in_flight: dict[str, int] = {}
+        self._frozen: dict[str, Any] | None = None
         self._started = time.monotonic()
+
+    def freeze_usage(self) -> None:
+        """Pin the current usage as final (post-kill manifest stability)."""
+        self._frozen = self._snapshot()
 
     # -- pre-call -----------------------------------------------------------
 
@@ -87,16 +93,26 @@ class CanaryBudget:
         if self._calls >= self.limits.max_calls:
             # The ledger has already consumed the call budget: the run is
             # over, not merely discouraged — surface it as an exception.
-            raise CanaryExceeded(f"call budget exhausted: {self._calls} calls >= max_calls={self.limits.max_calls}", usage)
+            self._frozen = usage
+            raise CanaryExceeded(
+                f"call budget exhausted: {self._calls} calls >= max_calls={self.limits.max_calls}", usage
+            )
         if call_number > self.limits.max_calls:
-            return Decision(False, f"call budget exceeded: call {call_number} > max_calls={self.limits.max_calls}")
+            return Decision(
+                False, f"call budget exceeded: call {call_number} > max_calls={self.limits.max_calls}"
+            )
         # In-flight reservations count toward the token ceiling: recorded
         # usage alone understates exposure while calls are outstanding.
         projected = self._tokens + sum(self._in_flight.values()) + est_tokens
         if projected > self.limits.max_tokens:
-            return Decision(False, f"token budget exceeded: projected {projected} > max_tokens={self.limits.max_tokens}")
+            return Decision(
+                False, f"token budget exceeded: projected {projected} > max_tokens={self.limits.max_tokens}"
+            )
         if self._cost + est_cost > self.limits.max_cost_usd:
-            return Decision(False, f"cost budget exceeded: ${self._cost + est_cost:.6f} > max_cost_usd={self.limits.max_cost_usd}")
+            return Decision(
+                False,
+                f"cost budget exceeded: ${self._cost + est_cost:.6f} > max_cost_usd={self.limits.max_cost_usd}",
+            )
         return Decision(True)
 
     def reserve(self, call_id: str, est_tokens: int) -> None:
@@ -110,17 +126,31 @@ class CanaryBudget:
     def _raise_if_exceeded(self) -> None:
         usage = self._snapshot()
         if self._calls > self.limits.max_calls:
-            raise CanaryExceeded(f"call budget exceeded: {self._calls} > max_calls={self.limits.max_calls}", usage)
+            self._frozen = usage
+            raise CanaryExceeded(
+                f"call budget exceeded: {self._calls} > max_calls={self.limits.max_calls}", usage
+            )
         if self._tokens > self.limits.max_tokens:
-            raise CanaryExceeded(f"token budget exceeded: {self._tokens} > max_tokens={self.limits.max_tokens}", usage)
+            self._frozen = usage
+            raise CanaryExceeded(
+                f"token budget exceeded: {self._tokens} > max_tokens={self.limits.max_tokens}", usage
+            )
         if self._cost > self.limits.max_cost_usd:
-            raise CanaryExceeded(f"cost budget exceeded: ${self._cost:.6f} > max_cost_usd={self.limits.max_cost_usd}", usage)
+            self._frozen = usage
+            raise CanaryExceeded(
+                f"cost budget exceeded: ${self._cost:.6f} > max_cost_usd={self.limits.max_cost_usd}", usage
+            )
         if usage["elapsed"] > self.limits.max_elapsed_seconds:
-            raise CanaryExceeded(f"elapsed budget exceeded: {usage['elapsed']:.1f}s > max_elapsed_seconds={self.limits.max_elapsed_seconds}", usage)
+            self._frozen = usage
+            raise CanaryExceeded(
+                f"elapsed budget exceeded: {usage['elapsed']:.1f}s > max_elapsed_seconds={self.limits.max_elapsed_seconds}",
+                usage,
+            )
         if self._calls >= self.limits.min_error_sample:
             rate = self._errors / self._calls
             # Strictly greater: exactly-at-threshold is not a kill.
             if rate > self.limits.max_error_rate:
+                self._frozen = usage
                 raise CanaryExceeded(
                     f"error rate exceeded: {rate:.3f} > max_error_rate={self.limits.max_error_rate} at n={self._calls}",
                     usage,
@@ -137,7 +167,63 @@ class CanaryBudget:
         self._raise_if_exceeded()
 
     def usage_snapshot(self) -> dict[str, Any]:
+        if self._frozen is not None:
+            return dict(self._frozen)
         return self._snapshot()
+
+
+def wrap_call_llm(base, budget: CanaryBudget, *, dry_run: bool = False):
+    """Wrap ``base`` (a ``call_llm``-compatible callable) so every dispatch is
+    budgeted: pre-call check → reserve → base → record. A failed provider
+    dispatch still consumes a slot; if that trips an error ceiling, the
+    budget's kill (``CanaryExceeded``) surfaces instead of the provider error.
+    Dry-run mode issues ZERO base calls.
+
+    When ``base`` declares no token counts, a conservative 400-token/call
+    estimate is used for the pre-call projection — an unestimable call size
+    of exactly zero would let outstanding in-flight reservations combine with
+    real traffic past the token ceiling (the projection must stay strictly
+    optimistic-free). Actual recorded usage always comes from the result.
+    """
+    default_est = 400
+    est_in = int(getattr(base, "tokens_in", default_est) or default_est)
+    est_out = int(getattr(base, "tokens_out", default_est) or default_est)
+    model = _default_model(budget.limits)
+    counter = itertools.count(1)
+
+    def _result_tokens(result) -> tuple[int, int]:
+        source = result if isinstance(result, dict) else getattr(result, "__dict__", {})
+        return int(source.get("tokens_in", 0) or 0), int(source.get("tokens_out", 0) or 0)
+
+    def wrapped(prompt, task=None, agent_id=None, **kwargs):
+        call_id = f"{task or 'call'}-{next(counter)}"
+        est = est_in + est_out
+        est_cost = budget.limits.token_cost(model, est_in, est_out)
+        usage = budget.usage_snapshot()
+        decision = budget.check(call_number=usage["calls"] + 1, est_tokens=est, est_cost=est_cost)
+        if not decision.allowed:
+            raise CanaryExceeded(decision.reason, budget.usage_snapshot())
+        budget.reserve(call_id, est_tokens=est)
+        try:
+            if dry_run:
+                budget.record(call_id, ok=True, tokens_in=est_in, tokens_out=est_out, latency_s=0.0)
+                return f"[canary-dry-run] {prompt[:80]}"
+            result = base(prompt, task=task, agent_id=agent_id, **kwargs)
+        except CanaryExceeded:
+            budget.release(call_id)
+            raise
+        except Exception:
+            budget.release(call_id)
+            # The failed dispatch is itself budgeted; a ceiling it trips
+            # (e.g. the error-rate kill) takes precedence over the provider
+            # error so the caller sees the termination reason.
+            budget.record(call_id, ok=False, tokens_in=0, tokens_out=0, latency_s=0.0)
+            raise
+        tokens_in, tokens_out = _result_tokens(result)
+        budget.record(call_id, ok=True, tokens_in=tokens_in, tokens_out=tokens_out, latency_s=0.0)
+        return result
+
+    return wrapped
 
 
 def _default_model(limits: CanaryLimits) -> str:

@@ -45,6 +45,23 @@ from gaworld.sim._utils import _minutes_to_time_str, _time_str_to_minutes
 # blocks were never candidates because the cut landed at 3.06 km on a map
 # 19 km across. The radius and the gravity weight are the real limits.
 _NO_CAP = 10 ** 6
+
+# Structured destination_purpose (Phase 1.9): derived deterministically from
+# the movement's scheduled activity — PILOT19 logged 172 purpose-unknown
+# travel records and 0 verified commuting because the field never existed.
+# Only work-related movement names a purpose; anything else stays explicitly
+# None (never guessed, no extra inference).
+_PURPOSE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("paid_work", ("工作", "上班", "加班", "办公", "开会", "出差")),
+)
+
+
+def _destination_purpose(activity: str) -> str | None:
+    text = (activity or "").strip()
+    for category, keywords in _PURPOSE_KEYWORDS:
+        if any(keyword in text for keyword in keywords):
+            return category
+    return None
 _DEFAULT_LOCATION_ASSIGNMENT = {
     "mode": "gravity",
     "workplace_candidates": 0,
@@ -355,12 +372,14 @@ def move_agent(
                 "route": locations.get("travel_route", []),
                 "congestion": float(locations.get("travel_congestion", 1.0) or 1.0),
                 "status": "in_transit",
+                "destination_purpose": locations.get("destination_purpose"),
             },
             "just_arrived": just_arrived,
         }
 
     origin = locations.get("current", locations.get("home", "Home"))
     target = desired_location or origin
+    destination_purpose = _destination_purpose(activity)
     if target == origin:
         locations["destination"] = target
         locations["travel_progress"] = 1.0
@@ -416,6 +435,9 @@ def move_agent(
     locations["travel_congestion"] = float(travel.get("congestion", 1.0) or 1.0)
     locations["depart_time"] = time_str
     locations["arrival_time"] = arrival_time
+    # Stored on locations so the in-transit snapshots of later ticks carry
+    # the purpose logged at departure.
+    locations["destination_purpose"] = destination_purpose
 
     if travel_minutes <= max(1, int(step_minutes or 1)):
         locations["current"] = target
@@ -437,6 +459,7 @@ def move_agent(
                 "rush_hour": is_rush,
                 "congestion": float(travel.get("congestion", 1.0) or 1.0),
                 "status": "arrived",
+                "destination_purpose": destination_purpose,
             },
             "just_arrived": True,
         }
@@ -460,6 +483,7 @@ def move_agent(
             "rush_hour": is_rush,
             "congestion": float(travel.get("congestion", 1.0) or 1.0),
             "status": "departed",
+            "destination_purpose": destination_purpose,
         },
         "just_arrived": False,
     }

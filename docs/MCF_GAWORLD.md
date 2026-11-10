@@ -178,6 +178,19 @@ the schedule's own slots), so `get_activity_for_time` never falls back to
 bypass the time-fit keyword gate) and D3 (no hour gate on movement /
 venue-open) are retained as documented limitations.
 
+Phase 1.9 extension (post-PILOT19, RESULT-3475): the D1 guard was widened —
+a schedule whose existing `00:00` head slot is NON-sleep (e.g. 个人时间) is
+now converted into sleep coverage (the head slot becomes sleep and the
+unscheduled night slots before the first morning slot are dropped; times
+still derive only from the schedule's own slots), fixing the pilot-proven
+no-op. The move path (`gaworld/sim/_location.py` `move_agent`) now logs a
+structured `destination_purpose` in its travel dicts, derived
+deterministically from the movement's scheduled activity (None when
+undeterminable — never guessed) and persisted on `locations` so in-transit
+snapshots carry the departure purpose. `classify_activity_record` promotes
+in-transit travel to commuting ONLY for work-related purposes (`paid_work`);
+unknown or non-work purposes stay `travel`.
+
 ### 2.2 Valid dimensions
 
 - **Paid-work vs leisure/social time-use error** — the two-dimensional frontier

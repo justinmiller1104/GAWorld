@@ -1038,6 +1038,9 @@ def travel_category() -> str:
 # unknown journeys stay travel and are excluded from commuting in survey
 # comparisons (see ``survey_comparison_categories``).
 _VERIFIED_PURPOSE_RE = re.compile(r"^[a-z_]+$")
+# Phase 1.9: only work-related purposes verify commuting — the earlier
+# any-snake-case rule promoted even a leisure journey to commuting.
+_COMMUTING_PURPOSES = frozenset({"paid_work"})
 
 
 def classify_activity_record(record: Mapping[str, object]) -> tuple[str, str]:
@@ -1056,7 +1059,7 @@ def classify_activity_record(record: Mapping[str, object]) -> tuple[str, str]:
     travel = record.get("travel")
     if isinstance(travel, Mapping) and str(travel.get("status", "")) in _IN_TRANSIT_STATUSES:
         purpose = str(record.get("destination_purpose", ""))
-        if purpose and _VERIFIED_PURPOSE_RE.match(purpose):
+        if purpose in _COMMUTING_PURPOSES and _VERIFIED_PURPOSE_RE.match(purpose):
             return "commuting", "destination_purpose"
         return travel_category(), "travel_status"
     category, confidence = classify_activity(str(record.get("final_activity", "")))

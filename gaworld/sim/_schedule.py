@@ -311,6 +311,30 @@ def ensure_sleep_in_schedule(
 ) -> list[tuple[str, str]]:
     if any(is_sleep_activity(activity) for _, activity in schedule):
         return schedule
+    # Widen the guard (Phase 1.9): a NON-sleep 00:00 head slot (e.g. 个人时间)
+    # used to defeat the Phase 1.8 fix — it only appended a 00:00 slot when
+    # missing, so PILOT19 agents with an existing non-sleep head slot got 0
+    # sleep minutes. Convert the head slot in place and drop the unscheduled
+    # night slots before the first morning slot (>= 07:00); all kept times
+    # already exist in the schedule, nothing is invented.
+    head_index = next((i for i, (t, _) in enumerate(schedule) if t == "00:00"), None)
+    if head_index is not None and not is_sleep_activity(schedule[head_index][1]):
+        schedule = list(schedule)
+        schedule[head_index] = ("00:00", "睡觉")
+        first_morning_index = next(
+            (
+                i
+                for i, (t, _) in enumerate(schedule)
+                if (_time_str_to_minutes(t) or 0) >= 7 * 60
+            ),
+            None,
+        )
+        if first_morning_index is not None:
+            schedule = [
+                slot for i, slot in enumerate(schedule) if i <= head_index or i >= first_morning_index
+            ]
+        schedule.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
+        return schedule
     is_student, is_retired, late_schedule, _ = _schedule_profile_flags(agent)
     if is_retired:
         sleep_time = "22:30"

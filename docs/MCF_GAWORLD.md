@@ -100,6 +100,73 @@ housework 77 min are whole-population weekly averages); below
 `MIN_COMPARISON_POPULATION=20` results stay exploratory
 (`frontier_valid=False`).
 
+#### 2.1.1 Observed-only time accounting (Phase 1.8, Contract 1)
+
+`compute_observed_minutes(episodes, tick_minutes, window_start=None,
+window_end=None)` is the honest twin of `compute_daily_minutes`: it never
+credits activity minutes past the last observed record. A sim ending at
+12:20 accounts exactly 740 observed minutes; the 12:20→24:00 tail is
+**unobserved**, never leisure/work/unknown-observed. The only extension
+past the last record is the Phase 1.0 corroborated evening-sleep tail
+(≥ 18:00 sleep records evidence sleeping on through midnight — this is
+also what carries a 23:30→00:30 sleep span across the day boundary and
+credits the next day's 00:00→00:30 head as sleep). Each agent-day yields
+an `ObservedBreakdown` with four separate buckets: `observed_minutes`
+(classified + unknown observed), `classified_minutes`, `unknown_minutes`,
+`unobserved_minutes` (1440 − observed); the mapping protocol exposes the
+per-category partition, which sums to the full 1440 with unobserved
+minutes folded into the `unknown` bucket (a scoring bucket, never a
+category). `coverage_breakdown(episodes, tick_minutes)` reports
+`observed_coverage` (classified / observed) and `full_day_coverage`
+(classified / 1440) as separate numbers — a half-observed day is never
+diluted into what looks like poor classification of a full day. An
+explicit `window_start`/`window_end` pins the observed span exactly
+(08:00→12:20 = 260 observed minutes).
+
+#### 2.1.2 Structured activity records (Phase 1.8, Contract 2)
+
+`ActivityRecord(run_id, agent_id, category, start_min, end_min,
+evidence_source)` is the machine-readable span record recommended above;
+it is captured from authoritative tick/schedule state with **zero
+additional LLM inference**. `category` may be the explicit `unknown` —
+nothing is fabricated (no invented sleep/work/leisure from an empty or
+unclassifiable record). Overlapping spans are merged deterministically
+by `dedupe_activity_records` (sort by (start, end, category, agent,
+evidence), union same-category overlaps) so no minute is ever
+double-counted. When a tick snapshot carries the structured
+`activity_category` field it takes precedence over keyword inference;
+keyword hits are the weakest evidence and are marked as such in
+`evidence_source`.
+
+#### 2.1.3 Travel vs commuting classification policy (Phase 1.8, Contract 3)
+
+`classify_activity_record` precedence: (1) structured `activity_category`
+→ evidence `structured`; (2) `travel.status == in_transit` → **travel**,
+never commuting, unless a structured `destination_purpose` names a
+verified purpose (e.g. `paid_work`) → `commuting` with evidence
+`destination_purpose`; (3) keyword inference; (4) `unknown`.
+Purpose-unknown journeys stay `travel`/unknown and are **excluded from
+commuting** in survey comparisons (`survey_comparison_categories()`:
+`travel` is a first-class bucket and `commuting_aliases` contains only
+`commuting`), so unknown-purpose travel cannot inflate the commuting
+estimate against the survey targets.
+
+#### 2.1.4 Run isolation (Phase 1.8, `benchmark/mcf/launch.py`)
+
+`create_run(base_dir, config)` gives every run a unique `run_id`
+(timestamp + uuid suffix) and its own `run_dir` under `base_dir`; episode
+files live inside it, so two consecutive runs can never append to each
+other's files and an interrupted run's partial outputs stay untouched by
+the next run. A partial manifest (`outcome="in_progress"`, empty
+`finished_at` — the exact format of the real interrupted pilot16 run
+`20261109_133955`) is written at creation; `finalize_run(handle,
+outcome=...)` rewrites it with the real outcome and a finish timestamp,
+and the manifest binds the run's own `output_dir` so results are always
+attributable to their run. `validate_observation_window(records,
+window_start_min, window_end_min, days=None)` flags episode records whose
+time falls outside the run's observation window or whose `day` is not one
+of the run's days (schedule-consistency guard).
+
 ### 2.2 Valid dimensions
 
 - **Paid-work vs leisure/social time-use error** — the two-dimensional frontier

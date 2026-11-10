@@ -105,6 +105,7 @@ from pathlib import Path
 
 __all__ = [
     "ADMISSIBLE_STYLE_FIT",
+    "ActivityRecord",
     "CATEGORIES",
     "MIN_COMPARISON_DAYS",
     "MIN_COMPARISON_POPULATION",
@@ -112,8 +113,13 @@ __all__ = [
     "TARGETS_2018",
     "TARGETS_2024",
     "Episode",
+    "ObservedBreakdown",
     "ScoreResult",
     "classify_activity",
+    "classify_activity_record",
+    "compute_observed_minutes",
+    "coverage_breakdown",
+    "dedupe_activity_records",
     "classify_episode",
     "compute_daily_minutes",
     "coverage",
@@ -121,6 +127,8 @@ __all__ = [
     "score_against_targets",
     "score_directory",
     "split_run_segments",
+    "survey_comparison_categories",
+    "travel_category",
     "validate_style_fit",
 ]
 
@@ -749,3 +757,326 @@ def score_directory(
         for agent_id, days in agent_daily.items():
             daily.setdefault(agent_id, {}).update(days)
     return score_against_targets(daily, employed_agents=employed_agent_ids)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.8 Part B.1: observed-only time accounting
+# ---------------------------------------------------------------------------
+
+
+class ObservedBreakdown:
+    """Observed-only minutes for one agent-day (Phase 1.8 Contract 1).
+
+    The four observed-only buckets are attributes; the mapping protocol
+    (``[]`` / ``in`` / ``get``) exposes them alongside the per-category
+    partition so ``breakdown[day]["sleep"]`` and ``breakdown[day]["observed_minutes"]``
+    read uniformly. Iteration (``items`` / ``values`` / ``keys``) walks only the
+    per-category partition, which sums to the full 24h day: category minutes
+    plus ``unknown`` — where ``unknown`` covers BOTH unclassifiable observed
+    minutes AND unobserved minutes past the last record (never credited to a
+    category). The attributes keep the honest split:
+
+    - ``observed_minutes``: classified + unknown observed (up to the last
+      observed record / corroboration, never to midnight on its own).
+    - ``classified_minutes``: observed minutes in a known category.
+    - ``unknown_minutes``: observed minutes that could not be classified.
+    - ``unobserved_minutes``: 1440 - observed (the tail past the last record).
+    """
+
+    __slots__ = (
+        "observed_minutes",
+        "classified_minutes",
+        "unknown_minutes",
+        "unobserved_minutes",
+        "minutes",
+    )
+
+    _FIELDS = (
+        "observed_minutes",
+        "classified_minutes",
+        "unknown_minutes",
+        "unobserved_minutes",
+    )
+
+    def __init__(
+        self,
+        observed_minutes: int,
+        classified_minutes: int,
+        unknown_minutes: int,
+        unobserved_minutes: int,
+        minutes: dict[str, int],
+    ):
+        self.observed_minutes = observed_minutes
+        self.classified_minutes = classified_minutes
+        self.unknown_minutes = unknown_minutes
+        self.unobserved_minutes = unobserved_minutes
+        self.minutes = minutes
+
+    def __getitem__(self, key: str) -> int:
+        if key in self._FIELDS:
+            return getattr(self, key)
+        return self.minutes[key]
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._FIELDS or key in self.minutes
+
+    def get(self, key: str, default: int | None = None) -> int | None:
+        if key in self._FIELDS:
+            return getattr(self, key)
+        return self.minutes.get(key, default)
+
+    def keys(self):
+        return self.minutes.keys()
+
+    def values(self):
+        return self.minutes.values()
+
+    def items(self):
+        return self.minutes.items()
+
+    def __iter__(self):
+        return iter(self.minutes)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"ObservedBreakdown(observed={self.observed_minutes}, "
+            f"classified={self.classified_minutes}, unknown={self.unknown_minutes}, "
+            f"unobserved={self.unobserved_minutes}, minutes={self.minutes})"
+        )
+
+
+def _sleep_tail_corroborated(last_start: int, last_category: str | None, prev_category: str | None) -> bool:
+    """Phase 1.0 corroboration rule (shared with compute_daily_minutes): an
+    evening (>= 18:00) sleep record evidences sleeping on through midnight; an
+    early-morning (<= 09:00) or work-break (post paid_work) sleep record
+    vouches for only a short window."""
+    if last_category != "sleep":
+        return False
+    if last_start >= 18 * 60:
+        return True
+    if last_start < 10 * 60:
+        return False
+    return prev_category != "paid_work"
+
+
+def compute_observed_minutes(
+    episodes: Iterable[Episode | Mapping[str, object]],
+    tick_minutes: int,
+    window_start: int | None = None,
+    window_end: int | None = None,
+) -> dict[int, dict[int, ObservedBreakdown]]:
+    """Observed-only per-agent, per-day minute accounting (Phase 1.8 Contract 1).
+
+    Unlike :func:`compute_daily_minutes` (which extrapolates a recorded
+    activity to midnight when a log simply stops), this scorer never credits
+    activity minutes past the last observed record: the tail from the last
+    record to 24:00 is unobserved, reported in ``unobserved_minutes`` (and in
+    the ``unknown`` bucket of the partition), never in a category. The only
+    exception is the Phase 1.0 corroborated evening-sleep tail, where the
+    record itself evidences sleep continuing through midnight — that span is
+    observed sleep, and it is what lets a cross-midnight sleep span credit
+    the next day's head correctly.
+
+    ``window_start`` / ``window_end`` (minutes of day) restrict the observed
+    span explicitly; by default the span runs from midnight to the last
+    record of the day.
+    """
+    by_agent_day: dict[tuple[int, int], list[tuple[int, str | None]]] = defaultdict(list)
+    for raw in episodes:
+        ep = _soft_coerce(raw)
+        category, _ = classify_episode(ep)
+        by_agent_day[(ep.agent_id, ep.day)].append((_parse_clock(ep.time), category))
+
+    result: dict[int, dict[int, ObservedBreakdown]] = {}
+    by_agent: dict[int, list[int]] = defaultdict(list)
+    for agent_id, day in by_agent_day:
+        by_agent[agent_id].append(day)
+    for agent_id in sorted(by_agent):
+        prev_corroborated_sleep = False
+        for day in sorted(by_agent[agent_id]):
+            stamps = sorted(by_agent_day[(agent_id, day)], key=lambda s: s[0])
+            minutes = _empty_minutes()
+            lo = window_start if window_start is not None else 0
+            # Observed span end: an explicit window pins it; otherwise the last
+            # record, extended to midnight only by a corroborated sleep tail.
+            last_start, last_category = stamps[-1]
+            prev_cat = stamps[-2][1] if len(stamps) > 1 else None
+            corroborated = _sleep_tail_corroborated(last_start, last_category, prev_cat)
+            hi = window_end if window_end is not None else (MINUTES_PER_DAY if corroborated else last_start)
+            hi = max(hi, last_start)
+            if hi <= lo:
+                minutes[UNKNOWN] = MINUTES_PER_DAY
+            else:
+                # Head before the first in-window record: observed (the sim was
+                # running) but unattributed — carried sleep when the previous
+                # recorded day ended in corroborated sleep, otherwise unknown.
+                first_in_window = next((s for s in stamps if s[0] >= lo and s[0] <= hi), None)
+                in_window = [s for s in stamps if lo <= s[0] <= hi]
+                if first_in_window is not None and first_in_window[0] > lo:
+                    head = first_in_window[0] - lo
+                    if prev_corroborated_sleep and window_start is None:
+                        minutes["sleep"] += head
+                    else:
+                        minutes[UNKNOWN] += head
+                for index in range(len(in_window) - 1):
+                    start, category = in_window[index]
+                    gap = in_window[index + 1][0] - start
+                    minutes[category or UNKNOWN] += gap
+                if corroborated:
+                    minutes["sleep"] += MINUTES_PER_DAY - last_start
+                elif hi - last_start > 0 and last_start >= lo:
+                    # An uncorroborated short tail vouches for at most 2*tick of
+                    # the recorded category (the record pins that instant); the
+                    # remainder past the last record is unobserved, not unknown-
+                    # observed, and stays out of the category partition.
+                    minutes[last_category or UNKNOWN] += min(hi - last_start, 2 * tick_minutes)
+            partition_total = sum(minutes.values())
+            unobserved = max(MINUTES_PER_DAY - partition_total, 0)
+            # The reported partition sums to the full day: unobserved minutes
+            # fold into ``unknown`` (a scoring bucket, never a category); the
+            # ObservedBreakdown fields keep the honest split.
+            minutes[UNKNOWN] += unobserved
+            classified = sum(v for k, v in minutes.items() if k != UNKNOWN)
+            observed = partition_total
+            breakdown = ObservedBreakdown(
+                observed_minutes=observed,
+                classified_minutes=classified,
+                unknown_minutes=observed - classified,
+                unobserved_minutes=unobserved,
+                minutes=dict(minutes),
+            )
+            result.setdefault(agent_id, {})[day] = breakdown
+            prev_corroborated_sleep = corroborated
+    return result
+
+
+def coverage_breakdown(
+    episodes: Iterable[Episode | Mapping[str, object]],
+    tick_minutes: int,
+) -> dict[str, float]:
+    """Observed-span coverage vs full-day coverage, reported separately.
+
+    ``observed_coverage`` = classified / observed minutes; ``full_day_coverage``
+    = classified / 1440. The two are kept apart so a half-observed day is not
+    diluted into what looks like a poorly classified full day.
+    """
+    breakdowns = compute_observed_minutes(episodes, tick_minutes)
+    classified = 0
+    observed = 0
+    for days in breakdowns.values():
+        for breakdown in days.values():
+            classified += breakdown.classified_minutes
+            observed += breakdown.observed_minutes
+    total_days = sum(len(days) for days in breakdowns.values())
+    return {
+        "observed_coverage": (classified / observed) if observed > 0 else 0.0,
+        "full_day_coverage": classified / (MINUTES_PER_DAY * total_days) if total_days else 0.0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.8 Part B.2/B.3: structured activity records, travel vs commuting
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ActivityRecord:
+    """Machine-readable activity span (Phase 1.8 Contract 2).
+
+    Captured from authoritative tick/schedule state — never from LLM
+    inference. ``category`` may be the explicit ``unknown``: nothing is
+    fabricated (no invented sleep/work/leisure)."""
+
+    run_id: str
+    agent_id: int
+    category: str
+    start_min: int
+    end_min: int
+    evidence_source: str
+
+
+def dedupe_activity_records(records: Iterable[ActivityRecord]) -> list[ActivityRecord]:
+    """Deterministically merge identical / overlapping same-category spans.
+
+    Records are sorted by (start, end, category, agent, evidence) and
+    same-category spans that overlap or touch are unioned, so overlapping
+    evidence is never double-counted regardless of input order.
+    """
+    ordered = sorted(records, key=lambda r: (r.start_min, r.end_min, r.category, r.agent_id, r.evidence_source))
+    merged: list[ActivityRecord] = []
+    for record in ordered:
+        if merged:
+            last = merged[-1]
+            if (
+                last.category == record.category
+                and last.agent_id == record.agent_id
+                and record.start_min <= last.end_min
+            ):
+                if record.end_min > last.end_min:
+                    merged[-1] = ActivityRecord(
+                        run_id=last.run_id,
+                        agent_id=last.agent_id,
+                        category=last.category,
+                        start_min=last.start_min,
+                        end_min=record.end_min,
+                        evidence_source=last.evidence_source,
+                    )
+                continue
+        merged.append(record)
+    return merged
+
+
+def travel_category() -> str:
+    """The first-class category for purpose-unknown journeys (Phase 1.8
+    Contract 3): plain travel, distinct from ``commuting``."""
+    return "travel"
+
+
+# Travel vs commuting (Phase 1.8 Contract 3): ``travel.status == in_transit``
+# proves travel, never commuting. Commuting requires a verified work purpose
+# (a structured ``destination_purpose`` naming a real category); purpose-
+# unknown journeys stay travel and are excluded from commuting in survey
+# comparisons (see ``survey_comparison_categories``).
+_VERIFIED_PURPOSE_RE = re.compile(r"^[a-z_]+$")
+
+
+def classify_activity_record(record: Mapping[str, object]) -> tuple[str, str]:
+    """Classify one structured activity snapshot -> (category, evidence_source).
+
+    Precedence (deterministic):
+    1. authoritative structured ``activity_category`` -> ``structured``;
+    2. ``travel.status == in_transit`` -> commuting ONLY with a structured
+       verified ``destination_purpose``, otherwise plain ``travel``;
+    3. keyword inference (weakest evidence, marked ``keyword``);
+    4. ``unknown`` — never fabricated sleep/work/leisure.
+    """
+    structured = record.get("activity_category")
+    if structured:
+        return str(structured), "structured"
+    travel = record.get("travel")
+    if isinstance(travel, Mapping) and str(travel.get("status", "")) in _IN_TRANSIT_STATUSES:
+        purpose = str(record.get("destination_purpose", ""))
+        if purpose and _VERIFIED_PURPOSE_RE.match(purpose):
+            return "commuting", "destination_purpose"
+        return travel_category(), "travel_status"
+    category, confidence = classify_activity(str(record.get("final_activity", "")))
+    if category is not None:
+        return category, confidence
+    category, _ = classify_activity(str(record.get("scheduled_activity", "")))
+    if category is not None:
+        return category, "scheduled_keyword"
+    return UNKNOWN, "unknown"
+
+
+def survey_comparison_categories() -> dict[str, list[str]]:
+    """Category buckets used when comparing against time-use surveys.
+
+    ``travel`` is a first-class bucket; purpose-unknown journeys are NEVER
+    folded into ``commuting`` (``commuting_aliases`` holds only the category
+    itself), so unknown-purpose travel cannot inflate the commuting estimate.
+    """
+    return {
+        "travel": [travel_category()],
+        "commuting": ["commuting"],
+        "commuting_aliases": ["commuting"],
+    }

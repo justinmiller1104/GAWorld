@@ -17,11 +17,130 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
 from benchmark.mcf.canary import CanaryBudget, CanaryExceeded, CanaryLimits
+
+# ---------------------------------------------------------------------------
+# Phase 1.8 Part C: run isolation
+# ---------------------------------------------------------------------------
+
+
+def _new_run_id() -> str:
+    """Unique per-run id: timestamp for human reading, uuid suffix for uniqueness
+    even when two runs start in the same second or the clock steps back."""
+    return f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
+@dataclass
+class RunHandle:
+    """One isolated run: its own id, its own output directory, its own manifest."""
+
+    run_id: str
+    base_dir: Path
+    run_dir: Path
+    manifest_path: Path
+    config: dict[str, Any] = field(default_factory=dict)
+    started_at: str = ""
+    finalized: bool = False
+
+    def write_manifest(self, *, outcome: str, finished_at: str = "") -> dict[str, Any]:
+        """Write (or rewrite) this run's manifest into its own directory."""
+        manifest = {
+            "run_id": self.run_id,
+            "outcome": outcome,
+            "started_at": self.started_at,
+            "finished_at": finished_at,
+            "output_dir": str(self.run_dir),
+            "outputs": [str(self.run_dir)],
+            "config": self.config,
+        }
+        self.manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        return manifest
+
+
+def create_run(base_dir: str | Path, config: dict[str, Any] | None = None) -> Any:
+    """Create a new, isolated run under ``base_dir`` (Phase 1.8 Contract 3).
+
+    Each run gets a unique ``run_id`` and its own ``run_dir``; episode files
+    live inside it, so a second run can never append to a previous run's
+    files. A partial manifest (``outcome="in_progress"``, empty
+    ``finished_at`` — the format of real interrupted pilot runs) is written
+    immediately and is finalized by :func:`finalize_run`. Usable as a context
+    manager: exiting without finalize leaves the partial manifest untouched
+    (safe interrupted-run handling).
+    """
+    base = Path(base_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    run_id = _new_run_id()
+    run_dir = base / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    handle = RunHandle(
+        run_id=run_id,
+        base_dir=base,
+        run_dir=run_dir,
+        manifest_path=run_dir / "run_manifest.json",
+        config=dict(config or {}),
+        started_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+    )
+    handle.write_manifest(outcome="in_progress")
+
+    class _RunContext:
+        def __enter__(self) -> RunHandle:
+            return handle
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            if not handle.finalized:
+                # Interrupted: leave the partial manifest (in_progress / empty
+                # finished_at) in the run's own directory; nothing is appended
+                # anywhere else, and the next run starts in its own directory.
+                handle.write_manifest(outcome="in_progress")
+            return False
+
+    return _RunContext()
+
+
+def finalize_run(handle: RunHandle, *, outcome: str = "completed") -> dict[str, Any]:
+    """Write the final manifest for ``handle``: real outcome + finish timestamp."""
+    handle.finalized = True
+    return handle.write_manifest(outcome=outcome, finished_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
+
+
+def validate_observation_window(
+    records: Iterable[Mapping[str, object]],
+    window_start_min: int,
+    window_end_min: int,
+    days: Iterable[int] | None = None,
+) -> list[str]:
+    """Schedule-consistency check (Phase 1.8 Contract 3): every record's time
+    must fall inside the run's observation window, and (when ``days`` is
+    given) on one of the run's days. Returns human-readable problems naming
+    the offending record; empty list = clean."""
+    allowed_days = set(days) if days is not None else None
+    problems: list[str] = []
+    for record in records:
+        day = int(record.get("day", 0))  # type: ignore[arg-type]
+        clock = str(record.get("time", ""))
+        minute = -1
+        if ":" in clock:
+            hours, minutes = clock.split(":")
+            minute = int(hours) * 60 + int(minutes)
+        if allowed_days is not None and day not in allowed_days:
+            problems.append(
+                f"agent {record.get('agent_id')} record on day {day} {clock}: "
+                f"outside the run's days {sorted(allowed_days)}"
+            )
+            continue
+        if not (window_start_min <= minute <= window_end_min):
+            problems.append(
+                f"agent {record.get('agent_id')} record at {clock} (minute {minute}): "
+                f"outside observation window [{window_start_min}, {window_end_min}]"
+            )
+    return problems
 
 
 def _measured_usage(raw: Any) -> tuple[int, int] | None:

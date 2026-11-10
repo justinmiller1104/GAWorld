@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "run_id": "39de994dde224711bc329a62ef87a988",
+  "slug": "20261109_133955",
+  "started_at": "2026-11-09T13:39:55+00:00",
+  "finished_at": "",
+  "duration_s": 0.0,
+  "outcome": "in_progress",
+  "comparability_epoch": 12,
+  "error": "",
+  "environment": {
+    "python": "3.14.7",
+    "python_impl": "CPython",
+    "platform": "Linux-7.2.0-202.nobara.fc44.x86_64-x86_64-with-glibc2.43",
+    "machine": "x86_64",
+    "hostname": "nobara-pc",
+    "pid": 20847
+  },
+  "git": {
+    "commit": "68b743cb403e9e9b72ea3f76348cb927c1a047c2",
+    "branch": "task/3424",
+    "dirty": true
+  },
+  "dependencies": {
+    "pandas": "2.3.3",
+    "numpy": "2.4.6",
+    "requests": "2.33.1",
+    "matplotlib": "3.10.9",
+    "networkx": "3.6.1"
+  },
+  "config": {
+    "agent_ids": [
+      4,
+      15
+    ],
+    "sim_days": 1,
+    "seconds_per_day": 10,
+    "simulate_realtime": false,
+    "time_step_minutes": 10,
+    "stateful": true,
+    "background": "中国·柯桥区。大城市，亚热带气候。当地经济与就业结构与其规模相称，居民对物价、就业与公共服务的变化较为敏感；社会秩序稳定。",
+    "memory_model_version": 3,
+    "require_clean_reset_on_memory_model_change": true,
+    "csv_path": "data/cities/绍兴柯桥/agents.csv",
+    "md_path": "data/cities/绍兴柯桥/profiles.md",
+    "map_path": "data/cities/绍兴柯桥/citymap.md",
+    "memory_dir": "output/cities/绍兴柯桥/memory",
+    "log_dir": "output/cities/绍兴柯桥/logs",
+    "diary_output_dir": "output/cities/绍兴柯桥/diaries",
+    "environment_output_dir": "output/cities/绍兴柯桥/environment",
+    "random_seed": 42,
+    "organizations": {
+      "enabled": false,
+      "output_dir": "output/cities/绍兴柯桥/organizations",
+      "seeds": [],
+      "governance": {
+        "enabled": false,
+        "mode": "member_vote",
+        "threshold": "quorum_majority",
+        "voting_days": 1
+      }
+    },
+    "news": {
+      "enabled": true
+    },
+    "external_rag": {
+      "enabled": true,
+      "top_k": 2
+    },
+    "intervention": {
+      "enabled": true
+    },
+    "external_environment_service": {
+      "enabled": false
+    },
+    "distributed": {
+      "enabled": true
+    },
+    "visualization": {
+      "enabled": true
+    },
+    "life_events": {
+      "enabled": true
+    },
+    "human_realism": {
+      "enabled": true
+    },
+    "concurrency": {
+      "enabled": false,
+      "day_routine_workers": 1
+    },
+    "economy": {
+      "enabled": true
+    },
+    "run_manifest": {
+      "enabled": true
+    },
+    "llm": {
+      "providers": {
+        "ollama_local": {
+          "type": "ollama",
+          "model": "gemma3n:e4b",
+          "base_url": "http://localhost:11434/api/generate"
+        },
+        "ollama_gemma4": {
+          "type": "ollama",
+          "model": "gemma4:e4b",
+          "base_url": "http://localhost:11434/api/generate"
+        },
+        "ollama_qwen": {
+          "type": "ollama",
+          "model": "qwen3.5:9b",
+          "base_url": "http://localhost:11434/api/generate"
+        },
+        "omlx_qwen": {
+          "type": "openai",
+          "model": "Qwen3.5-9B-MLX-4bit",
+          "base_url": "http://127.0.0.1:8000/v1"
+        },
+        "openai_gpt": {
+          "type": "openai",
+          "model": "gpt-5.4",
+          "base_url": "https://api.openai.com/v1"
+        },
+        "minimax": {
+          "type": "anthropic",
+          "model": "MiniMax-M2.7",
+          "base_url": "https://api.minimaxi.com/anthropic"
+        },
+        "deepseek_flash": {
+          "type": "openai",
+          "model": "deepseek-flash",
+          "base_url": "https://api.deepseek.com"
+        },
+        "deepseek_pro": {
+          "type": "openai",
+          "model": "deepseek-v4-pro",
+          "base_url": "https://api.deepseek.com"
+        },
+        "glm_5": {
+          "type": "openai",
+          "model": "glm-5",
+          "base_url": "https://open.bigmodel.cn/api/paas/v4"
+        },
+        "local_qwen4b": {
+          "type": "openai",
+          "model": "qwen3-4b",
+          "base_url": "http://127.0.0.1:8080/v1"
+        },
+        "gemma4-12b": {
+          "type": "ollama",
+          "model": "gemma4:12b",
+          "base_url": "http://localhost:11434/api/generate"
+        },
+        "MiniMax-M3": {
+          "type": "anthropic",
+          "model": "MiniMax-M3",
+          "base_url": "https://api.minimaxi.com/anthropic"
+        },
+        "M31Flash": {
+          "type": "anthropic",
+          "model": "M3.1-Flash",
+          "base_url": "https://api.minimaxi.com/anthropic"
+        },
+        "qwen-local": {
+          "type": "openai",
+          "model": "qwen/qwen3-4b-2507",
+          "base_url": "http://127.0.0.1:1234/v1"
+        }
+      },
+      "routing": {
+        "default": "qwen-local",
+        "fallback": [],
+        "tasks": {
+          "schedule": "qwen-local",
+          "default": "qwen-local"
+        }
+      }
+    }
+  },
+  "run": {
+    "sim_days": 1,
+    "agent_ids": [
+      4,
+      15
+    ],
+    "random_seed": 42,
+    "seed_source": "config",
+    "stateful": true
+  },
+  "llm": {},
+  "artefacts": {},
+  "notes": [],
+  "events": []
+}

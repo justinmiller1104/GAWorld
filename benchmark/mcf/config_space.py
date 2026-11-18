@@ -22,26 +22,56 @@ from typing import Any
 from benchmark.mcf import time_use
 from gaworld.parallel.sweep import patch_for
 
+# ``sources`` states each range's origin independently of the evaluation
+# metrics (MCF §3). PILOT-calibrated ranges cite the calibration record;
+# heuristic ranges say so honestly rather than borrowing authority.
 BANDS: dict[str, dict[str, Any]] = {
     "style_fit_amplitude": {
         "path": "personality.style_fit_amplitude",
         "low": time_use.ADMISSIBLE_STYLE_FIT[0],
         "high": time_use.ADMISSIBLE_STYLE_FIT[1],
+        "sources": [
+            "docs/MCF_GAWORLD_INTEGRATION_FEASIBILITY.md §4.4: acceptance band pre-registered in "
+            "gaworld/settings/personality.py from the literature argument that personality must "
+            "not explain >~15% of behavioural variance; 0.40/0.60 fail the "
+            "scripts/big5_effect_ceiling.py windows (literature-anchored calibration)",
+            "PILOT calibration: validated by benchmark.mcf.time_use.validate_style_fit; "
+            "0.9 is a stress value outside the band by construction (STRESS_STYLE_FIT)",
+        ],
     },
     "contagion_weight": {
         "path": "personality.emotion_baseline.contagion_weight",
         "low": 0.02,
         "high": 0.12,
+        "sources": [
+            "docs/MCF_GAWORLD_INTEGRATION_FEASIBILITY.md §4.4: social-contagion effect sizes "
+            "in the literature are small; the parameter exists to fix a documented defect "
+            "(_cognition.py hard-coded 0.1); default 0.06 is the band midpoint (literature "
+            "anchor on effect-size magnitude, exact endpoints heuristic)",
+            "docs/MCF_GAWORLD_PHASE_0_5_VALIDATION.md §5: effect size never measured — "
+            "range is plausible-but-unverified, kept away from the scorer by construction",
+        ],
     },
     "spending_daily_variance": {
         "path": "economy.spending.daily_variance",
         "low": 0.10,
         "high": 0.40,
+        "sources": [
+            "docs/MCF_GAWORLD_INTEGRATION_FEASIBILITY.md §4.4: plausible consumption-noise "
+            "range from household-budget survey dispersion (default 0.25); independent of "
+            "D2/D3 by construction and not the engel_curve itself (pilot heuristic, not "
+            "literature-justified endpoints)",
+        ],
     },
     "temperature": {
         "path": "llm.providers.omlx_qwen.temperature",
         "low": 0.0,
         "high": 0.7,
+        "sources": [
+            "docs/MCF_GAWORLD_INTEGRATION_FEASIBILITY.md §4.4: standard LLM-provider creative-"
+            "task diversity range (provider docs convention); 0.0 = deterministic floor, "
+            "0.7 stays below values where open-ended generation degrades into noise",
+        ],
     },
 }
 

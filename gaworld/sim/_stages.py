@@ -54,7 +54,7 @@ from gaworld.distributed.comm import (
 from gaworld.goals import match_goal_relevance
 from gaworld.kernel import ActionRequest
 from gaworld.logging_setup import get_logger
-from gaworld.memory.experience import append_agent_episode
+from gaworld.memory.experience import append_agent_episode, record_activity_span
 from gaworld.memory.store import (
     append_agent_log,
     vector_db_add_entry,
@@ -958,6 +958,16 @@ def _stage_memorize(agent, step, sim, *, scope):
         agent.setdefault("episodes", []).append(episode)
         update_habits_from_episode(agent, episode, scope.human_realism_config)
         append_agent_episode(agent_id, episode)
+        # Machine-readable activity span: closes the previous segment when the
+        # activity changed; the scorer prefers these over tick reconstruction.
+        record_activity_span(
+            agent_id,
+            scope.day,
+            scope.time_str,
+            effective_activity,
+            location=location,
+            purpose=str((travel or {}).get("destination_purpose", "") or ""),
+        )
         episode_text = (
             f"Day {scope.day} {scope.time_str} {effective_activity}/{act} @ {location} "
             f"driver={episode['decision_driver']} commitment={episode['commitment_level']} "

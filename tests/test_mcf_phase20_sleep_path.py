@@ -36,12 +36,31 @@ Deterministic only: no LLM, no network, no simulation run.
 
 from __future__ import annotations
 
+import pytest
+
 from gaworld.sim._schedule import (
     ensure_sleep_in_schedule,
     get_activity_for_time,
     is_sleep_activity,
 )
 from gaworld.sim._utils import _build_time_grid
+
+
+@pytest.fixture(autouse=True)
+def _mcf_realism_opt_in(monkeypatch):
+    """These contracts pin the Phase-2.0/2.1 realism-engine dynamics, which
+    are now gated behind behavior.mcf_realism (default off restores the
+    pre-change comparability baseline). Opt in for the whole module."""
+    monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
+
+
+@pytest.fixture(autouse=True)
+def _mcf_realism_opt_in(monkeypatch):
+    """These contracts pin the Phase-2.0/2.1 realism-engine dynamics, which
+    are now gated behind behavior.mcf_realism (default off restores the
+    pre-change comparability baseline). Opt in for the whole module."""
+    monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
+
 
 DEFAULT_AGENT: dict = {"job": "职员", "personality": "", "daily_life": "", "values": "", "work_style": ""}
 

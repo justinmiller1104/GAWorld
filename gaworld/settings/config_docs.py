@@ -1568,6 +1568,15 @@ MANUAL_HELP_EN: dict[str, str] = {
         "the city, meet nobody here, and add nothing to the roads. Off by default: it "
         "changes who is present on any given day, so earlier runs are not comparable."
     ),
+    "behavior.mcf_realism": (
+        "The Phase-2.0/2.1 realism-engine changes: sleep keywords harden the 0.85 "
+        "commitment tier, an interrupt-cooldown registry suppresses repeat "
+        "candidates, continue-vs-replace short-circuits same-activity winners, and "
+        "a late 睡前 tail is completed with 00:00 head coverage. Off by default: "
+        "with the gate off a run reproduces the pre-change dynamics exactly, so "
+        "earlier runs stay comparable. MCF experiment runs enable it explicitly and "
+        "their manifests carry a comparability epoch marker saying so."
+    ),
     "travel.max_away_share": (
         "Ceiling on how many residents may be out of town at once. Without it three "
         "independent triggers can empty the city."
@@ -2435,6 +2444,7 @@ MANUAL_HELP: dict[str, str] = {
     "human_realism.behavior.need_weights": "精力、饥饿、社交需求三者谁更容易打断当前活动。",
     "dynamic_behavior": "自发冲动、偶遇、需求打断、环境触发的临时改变——关掉后人会显得很按部就班。",
     "travel": "居民会离开本市几天：出差、去外省探亲、旅行，然后回来。在外期间他不占本市任何地点、不与本市任何人照面、也不上本市的路。默认关闭——它改变每天城里还剩多少人，开启前后的 run 不可比。",
+    "behavior.mcf_realism": "Phase-2.0/2.1 的写实引擎改动：睡觉关键词进入 0.85 承诺档、打断冷却登记表抑制重复候选、同活动的中奖者按「继续」短路不再重排日程、深夜「睡前」尾巴补上 00:00 头部覆盖。默认关闭——关着的时候默认配置的运行与改动前的动力学完全一致，早期 run 保持可比；MCF 实验显式开启，开启的 run 在 manifest 里带可比性纪元标记。",
     "travel.max_away_share": "同一天最多允许多少比例的居民在外。没有这个上限，三个触发叠加会把城市掏空。",
     "travel.daily_surcharge": "在外每天的住宿与外食开销，走经济系统的守恒支出通道结算。",
     "travel.paid_leave_days_per_year": "探亲或旅行每个仿真年可以按带薪年假请的工作日数，每天发一天的工资（税前月薪 ÷ 每月工作日）；超出的按无薪假。5 是工龄 1–10 年的法定最低档。出差算工作，周末不算假。",
@@ -2530,7 +2540,7 @@ MANUAL_HELP: dict[str, str] = {
     # ---- 大五人格 ----
     "personality.channels": "人格从哪几条路影响居民，可以分别关掉。rules 是确定性规则（动作选择、打断阈值、消费倾向、情绪基线），零调用且可复现；prompt 在决策提示词里额外加一两句本场景相关的行为锚句；voice 只进日记。分成三条是为了能回答「到底是决策变了还是文风变了」——全开时这个问题无解。\n\nprompt 默认关，依据是 A4 消融臂（1,632 次调用，提案 §15）：87 格配对探针，结构化选择朝锚句方向移动的只有 48/87（判据 52），反向锚句判别臂 16/30，两项都不达标。原因不是锚句没进模型——与分类器无关的文本相似度检验显示 anchor 与 plain 的输出确实比同条件两次采样更不像（Cohen d = 0.29），模型读了；是它没把选择推到决策循环看得见的方向。而人格进提示词这件事本身已由语料重写完成：每位居民的「人格与行为倾向」段落**不在这条通道上，无论开关都会渲染**，独立打分器能从中把分数读回来（r = 0.79）。锚句是在那之上再加一句所有同极人共用的泛泛话，89.8% 重复段落已写的维度，成本约 36 tokens/次。要做 A4 对照或想试更强的配置，把它打开即可。",
     "action_space.activities_per_call": "一次动作生成调用最多问几个活动。这个数不是拍的：848 条真实响应里，单个活动块中位 193 字、p75 215 字，而 provider 默认 512 token 的输出上限只放得下约 916 字——4 个活动正好卡在边上（实测 37.5% 被截断），6 个以上必然装不下。而真实一天有 10 个不重复活动，所以不分批的那次调用从来就不可能成功：它只能救回前 4 个，重试再撞同一堵墙。取 3 是给啰嗦的智能体留一档余量。分批不比原来贵——10 个活动分 4 次都成功，对比原来 2 次失败之后每个活动还要各补一次。",
-    "action_space.max_tokens": "动作生成（actions 任务）专用的输出 token 上限。PILOT19 的实跑控制台记录了该任务在 provider 默认 512 token 处被截断（LLM output was truncated by max_tokens=512），截断在下游表现为「动作空间生成颗粒无收」。默认 1024 给啰嗦的智能体留一倍余量；其他调用仍用各自 provider 的配置，不做全局上调。注意：512→1024 与 PILOT19 的动作空间结果不再严格可比（见 docs/MCF_GAWORLD.md §2.1.5）。",
+    "action_space.max_tokens": "动作生成（actions 任务）专用的输出 token 上限。PILOT19 的实跑控制台记录了该任务在 provider 默认 512 token 处被截断（LLM output was truncated by max_tokens=512），截断在下游表现为「动作空间生成颗粒无收」。默认保持改动前的 512（比较性基线）；MCF 实验配置在 behavior.mcf_realism 门控下显式调到 1024，给啰嗦的智能体留一倍余量；其他调用仍用各自 provider 的配置，不做全局上调（见 docs/MCF_GAWORLD.md §2.1.5）。",
     "personality.profile_path": "每位居民的五个人格分数（z 分，正数偏高、负数偏低）。由 scripts/calibrate_big5.py 从人物设定里的「性格与情绪特征」离线标定一次后冻结在这里，运行时只读不改：每次开跑都重新打分既费钱，也会让同一个种子的两次运行对不上。文件不在时改用人群先验采样。",
     "personality.strength": "人格总开关的力度。所有通道一起缩放，调到 0 等于人格不起作用但数据还在（可以拿来做对照组），调到 1 以上会让人格盖过情境。",
     "personality.style_fit_amplitude": "人格在「选哪个动作」里占多大权重。参照系是旁边已有的权重项：成长动机 0.6、习惯惯性约 0.9。调过 0.9 人格就和习惯一样强了，那不符合人格只解释一到两成行为差异的实证量级。改完先跑 scripts/big5_effect_ceiling.py 看隐含相关落没落在 0.10-0.40。",

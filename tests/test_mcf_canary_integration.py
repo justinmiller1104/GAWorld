@@ -148,11 +148,14 @@ class TestRetriesCountTowardBudget:
 class TestDefaultOff:
     def test_call_llm_works_without_canary_and_does_not_import_it(self):
         import gaworld.llm.providers as providers
-        import sys
+        import inspect
 
-        # The production module must not depend on the canary module.
-        assert not any(m == "benchmark.mcf.canary" for m in sys.modules
-                       if m.startswith("benchmark")), (
+        # Module-graph assertion: the production module must not import the
+        # canary (or any benchmark module) — checked at source level, since
+        # sys.modules absence is not observable once any test in the session
+        # has imported the canary deliberately.
+        source = inspect.getsource(providers)
+        assert "benchmark" not in source, (
             "production providers module pulled in the canary at import time"
         )
         # And the plain public entry point still exists with its signature.

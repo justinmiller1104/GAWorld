@@ -28,7 +28,11 @@ pure-Python unit tests on stubbed state — no LLM, no network:
       compute_observed_minutes credits sleep, not night travel
 """
 
+from __future__ import annotations
+
 import random
+
+import pytest
 
 from benchmark.mcf.time_use import compute_observed_minutes
 from gaworld.behavior.dynamic import (
@@ -40,6 +44,15 @@ from gaworld.sim._schedule import (
     get_activity_for_time,
     is_sleep_activity,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mcf_realism_opt_in(monkeypatch):
+    """These contracts pin the Phase-2.0/2.1 realism-engine dynamics, which
+    are now gated behind behavior.mcf_realism (default off restores the
+    pre-change comparability baseline). Opt in for the whole module."""
+    monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
+
 
 # ---------------------------------------------------------------------------
 # Deterministic stubs
@@ -90,9 +103,7 @@ NIGHT_SCHEDULE = [
 
 
 def _step(agent, time_str, activity, env_events=()):
-    return evaluate_step_dynamics(
-        agent, time_str, activity, list(env_events), [], {}, config={}
-    )
+    return evaluate_step_dynamics(agent, time_str, activity, list(env_events), [], {}, config={})
 
 
 def _tick_time(tick):
@@ -134,8 +145,7 @@ def test_case2_sleep_survives_a_full_night_of_low_priority_churn():
             consecutive = 0
         else:
             assert is_sleep_activity(result["activity"]) or result["activity"] == "睡前", (
-                f"tick {tick}: activity drifted off sleep without an override "
-                f"({result['activity']!r})"
+                f"tick {tick}: activity drifted off sleep without an override ({result['activity']!r})"
             )
             consecutive += 1
         assert not result["changed"], (
@@ -185,8 +195,7 @@ def test_case4_night_weather_suggestion_over_sleep_is_rejected():
         random.seed(tick)
         result = _step(_stub_agent(), _tick_time(tick), "睡前", [MEIYU_EVENT])
         assert not result["changed"], (
-            f"tick {_tick_time(tick)}: non-urgent weather displaced sleep "
-            f"(interrupt={result['interrupt']})"
+            f"tick {_tick_time(tick)}: non-urgent weather displaced sleep (interrupt={result['interrupt']})"
         )
 
 
@@ -342,6 +351,4 @@ def test_case10b_cross_midnight_head_slot_survives_and_scores_sleep_not_travel()
         f"cross-midnight night sleep credited as {breakdown['sleep']} min, expected > 300"
     )
     travel = breakdown.get("commuting", 0)
-    assert travel < 30, (
-        f"night travel credited as {travel} min, expected ≈ 0"
-    )
+    assert travel < 30, f"night travel credited as {travel} min, expected ≈ 0"

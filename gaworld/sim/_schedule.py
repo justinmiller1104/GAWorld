@@ -34,12 +34,14 @@ import re
 from typing import Any
 
 from gaworld.settings import CONFIG
+from gaworld.settings.behavior import mcf_realism_enabled
 from gaworld.sim._timefit import repair_schedule
 from gaworld.sim._utils import _minutes_to_time_str, _time_str_to_minutes
 
 # ---------------------------------------------------------------------------
 # JSON-array extraction and schedule parsing.
 # ---------------------------------------------------------------------------
+
 
 def _extract_json_array_block(text: str) -> str:
     block_match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.S)
@@ -90,7 +92,7 @@ def repair_inner_quotes(blob: str) -> str:
             index += 1
             continue
         if char == "\\" and index + 1 < length:
-            out.append(blob[index:index + 2])
+            out.append(blob[index : index + 2])
             index += 2
             continue
         if char == '"':
@@ -218,13 +220,16 @@ def _parse_interview(text: str, questions: list[str]) -> list[dict[str, str]]:
 # Heuristic baseline schedules per archetype.
 # ---------------------------------------------------------------------------
 
+
 def _heuristic_schedule(agent: dict[str, Any]) -> list[tuple[str, str]]:
-    profile_blob = " ".join([
-        agent.get("job", ""),
-        agent.get("personality", ""),
-        agent.get("daily_life", ""),
-        agent.get("values", ""),
-    ])
+    profile_blob = " ".join(
+        [
+            agent.get("job", ""),
+            agent.get("personality", ""),
+            agent.get("daily_life", ""),
+            agent.get("values", ""),
+        ]
+    )
 
     is_student = any(k in profile_blob for k in ["学生", "硕士", "博士", "课题组"])
     is_retired = any(k in profile_blob for k in ["退休", "无业", "待业", "失业", "家庭主妇", "家庭主夫"])
@@ -281,15 +286,19 @@ def _heuristic_schedule(agent: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def _schedule_profile_flags(agent: dict[str, Any]) -> tuple[bool, bool, bool, bool]:
-    profile_blob = " ".join([
-        agent.get("job", ""),
-        agent.get("personality", ""),
-        agent.get("daily_life", ""),
-        agent.get("values", ""),
-        agent.get("work_style", ""),
-    ])
+    profile_blob = " ".join(
+        [
+            agent.get("job", ""),
+            agent.get("personality", ""),
+            agent.get("daily_life", ""),
+            agent.get("values", ""),
+            agent.get("work_style", ""),
+        ]
+    )
     is_student = any(k in profile_blob for k in ["学生", "硕士", "博士", "课题组", "上课", "学习"])
-    is_retired = any(k in profile_blob for k in ["退休", "无业", "待业", "失业", "家庭主妇", "家庭主夫", "已退休"])
+    is_retired = any(
+        k in profile_blob for k in ["退休", "无业", "待业", "失业", "家庭主妇", "家庭主夫", "已退休"]
+    )
     late_schedule = any(k in profile_blob for k in ["夜间活跃", "晚睡", "作息偏晚"])
     overtime = "加班" in agent.get("work_style", "")
     return is_student, is_retired, late_schedule, overtime
@@ -306,24 +315,23 @@ def is_sleep_activity(activity: str) -> bool:
     return any(k in activity for k in SLEEP_KEYWORDS)
 
 
-def ensure_sleep_in_schedule(
-    agent: dict[str, Any], schedule: list[tuple[str, str]]
-) -> list[tuple[str, str]]:
+def ensure_sleep_in_schedule(agent: dict[str, Any], schedule: list[tuple[str, str]]) -> list[tuple[str, str]]:
     # An explicit sleep slot (睡觉/睡眠/入睡/就寝) is deliberate planning —
     # leave the schedule alone. A bare 睡前 tail, however, is this function's
     # own artifact from a previous day (cached schedules carry it); it only
     # says sleep *starts* late and implies sleep across midnight, so the
     # head of day must actually be covered (Phase 2.0: the early return on
     # any sleep tag made the guards below dead code for exactly those
-    # cached schedules — 0 sleep minutes end-to-end).
-    if any(is_sleep_activity(activity) and "睡前" not in activity for _, activity in schedule):
+    # cached schedules — 0 sleep minutes end-to-end). With the gate off
+    # (default) a 睡前 tag counts as sleep evidence again, matching the
+    # pre-change dynamics exactly.
+    if any(
+        is_sleep_activity(activity) and ("睡前" not in activity or not mcf_realism_enabled())
+        for _, activity in schedule
+    ):
         return schedule
     first_morning_index = next(
-        (
-            i
-            for i, (t, _) in enumerate(schedule)
-            if (_time_str_to_minutes(t) or 0) >= 7 * 60
-        ),
+        (i for i, (t, _) in enumerate(schedule) if (_time_str_to_minutes(t) or 0) >= 7 * 60),
         None,
     )
     # Phase 1.9: a NON-sleep 00:00 head slot (e.g. 个人时间) used to defeat
@@ -342,11 +350,13 @@ def ensure_sleep_in_schedule(
         return schedule
     if head_index is not None and is_sleep_activity(schedule[head_index][1]):
         return schedule
-    # Phase 2.0: sleep evidence is only a late 睡前 tail and there is no
-    # 00:00 head slot — complete the tail with head coverage, reusing the
-    # tail's own label (nothing invented).
+    # Phase 2.0 (gated behind behavior.mcf_realism): sleep evidence is only
+    # a late 睡前 tail and there is no 00:00 head slot — complete the tail
+    # with head coverage, reusing the tail's own label (nothing invented).
+    # With the gate off (default) the schedule is left untouched, matching
+    # the pre-change dynamics.
     tail_label = next((a for _, a in schedule if is_sleep_activity(a)), None)
-    if tail_label is not None:
+    if tail_label is not None and mcf_realism_enabled():
         schedule = list(schedule) + [("00:00", tail_label)]
         if first_morning_index is not None:
             schedule = [
@@ -400,6 +410,7 @@ def ensure_sleep_in_schedule(
 # Schedule timing helpers.
 # ---------------------------------------------------------------------------
 
+
 def _schedule_times(schedule: list[tuple[str, str]]) -> list[str]:
     return [t for t, _ in schedule]
 
@@ -422,6 +433,7 @@ def _round_to_anchor(minutes: int, anchor_step: int = 30) -> int:
 # ---------------------------------------------------------------------------
 # Same-day replanning (P3).
 # ---------------------------------------------------------------------------
+
 
 def replan_affected_interval(
     schedule: list[tuple[str, str]],
@@ -547,9 +559,7 @@ def resolve_life_event_activities(event: dict[str, Any]) -> tuple[str, str]:
     return ("临时处理要务", "跟进后续")
 
 
-def is_routine_impacting_event(
-    event: dict[str, Any], tags: frozenset[str] = LIFE_EVENT_ROUTINE_TAGS
-) -> bool:
+def is_routine_impacting_event(event: dict[str, Any], tags: frozenset[str] = LIFE_EVENT_ROUTINE_TAGS) -> bool:
     """True when the event carries a tag that warrants reshaping the day."""
     if not isinstance(event, dict):
         return False
@@ -663,6 +673,7 @@ def _has_workday_signature(schedule: list[tuple[str, str]]) -> bool:
 # Text compaction + plan/reflection formatting.
 # ---------------------------------------------------------------------------
 
+
 def _compact_text(text: Any, max_chars: int = 120) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(cleaned) <= max_chars:
@@ -729,11 +740,30 @@ def format_reflection_text(reflection: Any) -> str:
 # Activity commitment-level and action-style tag classifiers.
 # ---------------------------------------------------------------------------
 
+
 def _activity_commitment_level(activity: Any) -> str:
     text = str(activity or "")
-    if any(k in text for k in ["工作", "上班", "会议", "开会", "上课", "学习", "实验", "看病", "医院", "诊所", "面试", "报告"]):
+    if any(
+        k in text
+        for k in [
+            "工作",
+            "上班",
+            "会议",
+            "开会",
+            "上课",
+            "学习",
+            "实验",
+            "看病",
+            "医院",
+            "诊所",
+            "面试",
+            "报告",
+        ]
+    ):
         return "high"
-    if any(k in text for k in ["购物", "买菜", "社交", "聚会", "拜访", "办事", "沟通", "会面", "约见", "联系"]):
+    if any(
+        k in text for k in ["购物", "买菜", "社交", "聚会", "拜访", "办事", "沟通", "会面", "约见", "联系"]
+    ):
         return "medium"
     return "low"
 
@@ -741,7 +771,9 @@ def _activity_commitment_level(activity: Any) -> str:
 def _action_style_tags(action_text: Any) -> set[str]:
     text = str(action_text or "")
     tags: set[str] = set()
-    if any(k in text for k in ["推进", "完成", "整理", "处理", "准备", "学习", "规划", "落实", "回复", "确认"]):
+    if any(
+        k in text for k in ["推进", "完成", "整理", "处理", "准备", "学习", "规划", "落实", "回复", "确认"]
+    ):
         tags.add("progress")
     if any(k in text for k in ["继续", "维持", "例行", "按原计划", "照常", "看看进度", "简单处理"]):
         tags.add("maintain")
@@ -759,6 +791,7 @@ def _action_style_tags(action_text: Any) -> set[str]:
 # ---------------------------------------------------------------------------
 # Agent state-driven recall labels.
 # ---------------------------------------------------------------------------
+
 
 def _state_recall_labels(agent: Any) -> list[str]:
     state = agent.get("state", {}) if isinstance(agent, dict) else {}
@@ -786,6 +819,7 @@ def _state_recall_labels(agent: Any) -> list[str]:
 # CONFIG sections wholesale, leaving snapshots pointing at the old dict;
 # see the S3 ``_bootstrap_agent_external_rag`` perf-fix story).
 # ---------------------------------------------------------------------------
+
 
 def _daily_plan_flex_config() -> dict[str, Any]:
     return CONFIG.get("daily_planning", {}).get("flexible", {}) or {}
@@ -851,9 +885,7 @@ def _dedupe_schedule_items(schedule: list[tuple[str, str]]) -> list[tuple[str, s
     return cleaned
 
 
-def _enforce_schedule_min_gap(
-    schedule: list[tuple[str, str]], min_gap: int = 15
-) -> list[tuple[str, str]]:
+def _enforce_schedule_min_gap(schedule: list[tuple[str, str]], min_gap: int = 15) -> list[tuple[str, str]]:
     if not schedule:
         return []
     sorted_schedule = sorted(schedule, key=lambda x: _time_str_to_minutes(x[0]) or 0)
@@ -886,15 +918,15 @@ def _has_enough_schedule_anchors(
         if _time_str_to_minutes(t) is not None and not is_sleep_activity(activity)
     ]
     candidate_minutes = [
-        _time_str_to_minutes(t)
-        for t, _ in candidate_schedule
-        if _time_str_to_minutes(t) is not None
+        _time_str_to_minutes(t) for t, _ in candidate_schedule if _time_str_to_minutes(t) is not None
     ]
     if not base_minutes or not candidate_minutes:
         return True
     close_count = 0
     for base_minute in base_minutes:
-        if any(abs(candidate_minute - base_minute) <= max_shift_minutes for candidate_minute in candidate_minutes):
+        if any(
+            abs(candidate_minute - base_minute) <= max_shift_minutes for candidate_minute in candidate_minutes
+        ):
             close_count += 1
     ratio = max(0.0, min(1.0, float(min_ratio)))
     required = min(len(base_minutes), max(2, int(round(len(base_minutes) * ratio))))
@@ -945,6 +977,7 @@ def normalize_flexible_schedule(
     ):
         return None
     return cleaned
+
 
 # Where an agent's day stands at a given time (moved from generative_city_sim).
 
@@ -1018,11 +1051,7 @@ def apply_schedule_override(schedule, time_str, activity, duration_minutes: int 
             # resumes on the slot's own clock (slot start + duration) — not as a
             # new persistent slot at the interrupt's timestamp.
             slot_start = max(
-                (
-                    m
-                    for t, _ in pairs
-                    if (m := _time_str_to_minutes(t)) is not None and m <= start
-                ),
+                (m for t, _ in pairs if (m := _time_str_to_minutes(t)) is not None and m <= start),
                 default=None,
             )
             if slot_start is not None and slot_start < start:

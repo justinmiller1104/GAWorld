@@ -302,7 +302,7 @@ def test_report_separates_mcf_validation_from_effect_section(tmp_path):
     assert set(report["mcf_validation"]) >= {"baseline", "intervention"}
     for arm_score in report["mcf_validation"].values():
         # per-arm MCF scores carry the score_against_targets essentials
-        assert "overall_error" in arm_score
+        assert "mean_category_error_not_for_frontier" in arm_score
     # Validation must not live inside the effect section.
     assert "mcf" not in report["effect"]
 

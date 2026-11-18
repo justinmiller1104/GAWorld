@@ -7,7 +7,7 @@ phase documents — including the complete evidence trail and change records —
 lives **outside the repository** in the external agent workspace:
 
 ```
-/home/justin/gaworld-agent-work/mcf-archive/     # external workspace (Phase 1.1)
+~/Documents/gaworld-agent-work/mcf-archive/     # external workspace (Phase 1.1)
 ```
 
 The in-repo copies of the superseded phase docs remain on disk (untracked)
@@ -301,7 +301,10 @@ Phase 2.0 fixes (offline validation, RESULT-3488 → GREEN):
   [0.02, 0.12], spending.daily_variance [0.10, 0.40], temperature [0.0, 0.7].
   Excluded: `initial_savings_months_min/max` and `engel_curve` rows
   (circularity/tautological bound-pressing). Ranges must be justified
-  independently of the evaluation metrics.
+  independently of the evaluation metrics — each `BANDS` entry in
+  `benchmark/mcf/config_space.py` carries a non-empty `sources` field citing
+  its origin (Feasibility §4.4 anchors, PILOT calibration, provider-doc
+  convention; heuristic endpoints are labelled as such).
 - **Matched seeds:** per-agent trait streams (`Random(seed·1000003 + agent_id)`)
   are config-independent; the U(1,6) initial-draw Gini component cancels at
   t=0 under matched seeds.
@@ -456,10 +459,9 @@ manufactured two-axis frontier.
 ## 6. Key evidence & provenance
 
 External archive (authoritative preserved copies):
-**`/home/justin/gaworld-agent-work/mcf-archive/`** (workspace created by the
-Phase 1.1 cleanup; the originally specified path
-`/home/justin/Documents/gaworld-agent-work/` was unavailable — read-only mount —
-see the workspace's `cleanup-inventory/change-log.md`).
+**`/home/justin/Documents/gaworld-agent-work/mcf-archive/`** (external workspace,
+outside the repo — created by the Phase 1.1 cleanup; see the workspace's
+`cleanup-inventory/change-log.md`).
 
 | Evidence | Value | Source |
 |---|---|---|

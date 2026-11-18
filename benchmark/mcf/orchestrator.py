@@ -10,12 +10,14 @@ and preserves its manifest + evidence. Restart-per-run: no checkpoint resume.
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from benchmark.mcf.canary import CanaryBudget, CanaryExceeded, CanaryLimits, wrap_call_llm
 from benchmark.mcf.config_space import config_id
 from benchmark.mcf.launch import _measured_usage
 from gaworld.settings import CONFIG
@@ -57,13 +59,36 @@ def run_legs(
     scorer: Scorer | None = None,
     employed_agent_ids: tuple[int, ...] = (),
     tick_minutes: int = 10,
+    call_llm: Callable[..., Any] | None = None,
+    pricing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute every (config, seed) leg; return one machine-readable table.
 
     Unknown scoring data yields an explicit unscored marker — numbers are never
     fabricated.
+
+    When ``call_llm`` is provided, each leg is enforced IN-EXECUTION through
+    the canary's own budget controller (``canary.wrap_call_llm`` +
+    ``CanaryLimits``): a leg that runs past its caps is killed at the next
+    call with ``CanaryExceeded`` instead of burning its whole budget and
+    being flagged afterwards. The post-leg usage check below remains as a
+    diagnostic (it also covers harnesses that ignore the injected llm).
     """
     caps = {**DEFAULT_LEG_LIMITS, **(limits or {})}
+    # One budget controller: same mechanism as the canary (Defect 3). Free
+    # pricing when none is given — cost stays 0 and only calls/tokens/time/
+    # error-rate enforce, matching the pre-cost Stage-1 caps.
+    canary_limits: CanaryLimits | None = None
+    if call_llm is not None:
+        canary_limits = CanaryLimits(
+            pricing=pricing or {"orchestrator-leg": {"input": 0.0, "output": 0.0}},
+            **{k: caps[k] for k in DEFAULT_LEG_LIMITS if k in caps},
+        )
+    harness_takes_llm = False
+    try:
+        harness_takes_llm = "call_llm" in inspect.signature(harness).parameters
+    except (TypeError, ValueError):
+        pass
     run_root = Path(run_root)
     run_root.mkdir(parents=True, exist_ok=True)
     model = CONFIG["llm"]["routing"]["default"]
@@ -76,8 +101,15 @@ def run_legs(
 
         started = time.monotonic()
         try:
-            result = harness(copy.deepcopy(config), run_dir, seed=seed) or {}
+            kwargs: dict[str, Any] = {}
+            if call_llm is not None and canary_limits is not None and harness_takes_llm:
+                kwargs["call_llm"] = wrap_call_llm(call_llm, CanaryBudget(canary_limits))
+            result = harness(copy.deepcopy(config), run_dir, seed=seed, **kwargs) or {}
             harness_error: str | None = None
+        except CanaryExceeded as exc:
+            # In-execution kill: same mechanism as the canary, same reason.
+            result = {"usage": exc.usage}
+            harness_error = f"budget: {exc.reason}"
         except Exception as exc:  # a leg crash must not kill the other legs
             result = {}
             harness_error = f"{type(exc).__name__}: {exc}"
@@ -87,7 +119,9 @@ def run_legs(
         stop_reason = ""
 
         if harness_error is not None:
-            status = "failed"
+            # An in-execution budget kill is an interruption (budget
+            # exhausted mid-leg), not a harness crash.
+            status = "interrupted" if harness_error.startswith("budget: ") else "failed"
             stop_reason = harness_error
         elif not result.get("ok", True):
             status = "failed"

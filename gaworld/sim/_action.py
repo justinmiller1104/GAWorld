@@ -78,6 +78,7 @@ _LOG = get_logger("gaworld.sim.action")
 # CONFIG runtime lookups — see module docstring for why.
 # ---------------------------------------------------------------------------
 
+
 def _stateful() -> bool:
     return bool(CONFIG.get("stateful", False))
 
@@ -139,10 +140,7 @@ def _salvage_action_space(text: str, activities: list[str]) -> dict[str, list[st
         activity = match.group(1).strip()
         if activity not in activities:
             continue
-        items = [
-            item.group(1).strip().replace('\\"', '"')
-            for item in _QUOTED_ITEM.finditer(match.group(2))
-        ]
+        items = [item.group(1).strip().replace('\\"', '"') for item in _QUOTED_ITEM.finditer(match.group(2))]
         items = [item for item in items if item]
         if items:
             salvaged[activity] = items
@@ -192,9 +190,7 @@ def _parse_action_space(text: str, activities: list[str]) -> dict[str, list[str]
     return action_space or _salvage_action_space(text, activities)
 
 
-def _parse_location_bias(
-    text: str, activities: list[str]
-) -> dict[str, dict[str, list[str]]]:
+def _parse_location_bias(text: str, activities: list[str]) -> dict[str, dict[str, list[str]]]:
     json_blob = _extract_json_block(text)
     if not json_blob:
         return {}
@@ -254,6 +250,7 @@ def _parse_policy_effect(text: str) -> dict[str, float]:
 # Layer 2 — LLM-generated action spaces.
 # ---------------------------------------------------------------------------
 
+
 def _activities_per_call() -> int:
     """Chunk size from CONFIG, floored at 1 so a bad value cannot stall."""
     try:
@@ -264,7 +261,8 @@ def _activities_per_call() -> int:
 
 
 def _llm_generate_actions(
-    agent: dict[str, Any], activities: list[str],
+    agent: dict[str, Any],
+    activities: list[str],
     seed_actions: dict[str, list[str]] | None = None,
 ) -> dict[str, list[str]]:
     """Action space for ``activities``, asked for in chunks that actually fit.
@@ -293,7 +291,7 @@ def _llm_generate_actions(
         return _llm_generate_actions_batch(agent, activities, seed_actions)
     merged: dict[str, list[str]] = {}
     for start in range(0, len(activities), chunk):
-        group = activities[start:start + chunk]
+        group = activities[start : start + chunk]
         seeds = None
         if seed_actions:
             # Only this chunk's seeds: the rest are prompt weight with nothing
@@ -312,25 +310,28 @@ def _action_space_max_tokens() -> int | None:
     Non-positive / unparseable values fall back to the provider default.
     """
     try:
-        raw = int((CONFIG.get("action_space", {}) or {}).get("max_tokens", 1024))
+        raw = int((CONFIG.get("action_space", {}) or {}).get("max_tokens", 512))
     except (TypeError, ValueError):
         return None
     return raw if raw > 0 else None
 
 
 def _llm_generate_actions_batch(
-    agent: dict[str, Any], activities: list[str],
+    agent: dict[str, Any],
+    activities: list[str],
     seed_actions: dict[str, list[str]] | None = None,
 ) -> dict[str, list[str]]:
     """One generation call plus its top-up retry, for a chunk that should fit."""
-    profile_text = "\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"年龄：{agent.get('age', '')}",
-        f"职业：{agent.get('job', '')}",
-        personality_line(agent, "action"),
-        f"日常生活与习惯：{agent.get('daily_life', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
+    profile_text = "\n".join(
+        [
+            f"姓名：{agent.get('name', '')}",
+            f"年龄：{agent.get('age', '')}",
+            f"职业：{agent.get('job', '')}",
+            personality_line(agent, "action"),
+            f"日常生活与习惯：{agent.get('daily_life', '')}",
+            f"价值观与公共事务态度：{agent.get('values', '')}",
+        ]
+    )
     memory_context = " ".join(activities)
     memory_hits = retrieve_relevant_memories(agent, memory_context, max_items=_vector_db_top_k())
     memory_hint = _format_memory_hint(memory_hits)
@@ -406,20 +407,24 @@ def save_action_space(agent_id: Any, action_space: dict[str, list[str]]) -> None
 
 
 def _llm_generate_location_bias(
-    agent: dict[str, Any], location: str, city_map_text: str,
+    agent: dict[str, Any],
+    location: str,
+    city_map_text: str,
     action_space: dict[str, list[str]],
 ) -> dict[str, dict[str, list[str]]]:
     activities = list(action_space.keys())
     if not activities:
         return {}
-    profile_text = "\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"年龄：{agent.get('age', '')}",
-        f"职业：{agent.get('job', '')}",
-        personality_line(agent, "action"),
-        f"日常生活与习惯：{agent.get('daily_life', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
+    profile_text = "\n".join(
+        [
+            f"姓名：{agent.get('name', '')}",
+            f"年龄：{agent.get('age', '')}",
+            f"职业：{agent.get('job', '')}",
+            personality_line(agent, "action"),
+            f"日常生活与习惯：{agent.get('daily_life', '')}",
+            f"价值观与公共事务态度：{agent.get('values', '')}",
+        ]
+    )
     actions_text = json.dumps(action_space, ensure_ascii=False, indent=2)
     prompt = f"""
 你是城市生活模拟器的“地点动作偏好”生成器。请基于角色资料、地点与城市地图，
@@ -447,7 +452,9 @@ def _llm_generate_location_bias(
 
 
 def get_location_action_bias(
-    agent: dict[str, Any], location: str, city_map_text: str,
+    agent: dict[str, Any],
+    location: str,
+    city_map_text: str,
     action_space: dict[str, list[str]],
 ) -> dict[str, dict[str, list[str]]]:
     if not city_map_text:
@@ -462,15 +469,14 @@ def get_location_action_bias(
     return bias
 
 
-def generate_actions(
-    agent: dict[str, Any], schedule: list[tuple[str, str]]
-) -> dict[str, list[str]]:
+def generate_actions(agent: dict[str, Any], schedule: list[tuple[str, str]]) -> dict[str, list[str]]:
     activities = sorted({activity for _, activity in schedule})
     return _llm_generate_actions(agent, activities)
 
 
 def build_action_space_for_agent(
-    agent: dict[str, Any], base_actions: dict[str, list[str]],
+    agent: dict[str, Any],
+    base_actions: dict[str, list[str]],
 ) -> dict[str, list[str]]:
     activities = list(base_actions.keys())
     refined_actions = _llm_generate_actions(agent, activities, seed_actions=base_actions)
@@ -493,6 +499,7 @@ DEFAULT_ACTIONS = {
 # Layer 3 — action selection.
 # ---------------------------------------------------------------------------
 
+
 def fallback_action(activity: str) -> str:
     for k, v in DEFAULT_ACTIONS.items():
         if k in activity:
@@ -501,7 +508,9 @@ def fallback_action(activity: str) -> str:
 
 
 def ensure_action_space_for_activity(
-    agent: dict[str, Any], action_space: dict[str, list[str]], activity: str,
+    agent: dict[str, Any],
+    action_space: dict[str, list[str]],
+    activity: str,
 ) -> bool:
     if activity in action_space:
         return False
@@ -540,7 +549,9 @@ def choose_action(
         contributions = candidate_provider(agent, activity) or []
         if contributions:
             options = list(options)
-            options.extend(option for option in contributions if isinstance(option, str) and option not in options)
+            options.extend(
+                option for option in contributions if isinstance(option, str) and option not in options
+            )
 
     if not options:
         result = fallback_action(activity)
@@ -569,7 +580,9 @@ def choose_action(
     if _stateful():
         recent_actions = load_recent_actions(agent["id"], max_items=6)
     refs = decision_refs or {}
-    transient_thought = refs.get("transient_thought") if isinstance(refs.get("transient_thought"), dict) else {}
+    transient_thought = (
+        refs.get("transient_thought") if isinstance(refs.get("transient_thought"), dict) else {}
+    )
     thought_intensity = float(transient_thought.get("intensity", 0.0) or 0.0)
     thought_source = str(transient_thought.get("source", ""))
     thought_kind = str(transient_thought.get("kind", ""))
@@ -577,7 +590,21 @@ def choose_action(
     use_location_time = bool(refs.get("location_time_relevant", True))
     default_social_relevant = _activity_matches_keywords(
         activity,
-        ["社交", "联系", "沟通", "拜访", "会面", "聚会", "聊天", "会议", "组会", "讨论", "协作", "家人", "朋友"],
+        [
+            "社交",
+            "联系",
+            "沟通",
+            "拜访",
+            "会面",
+            "聚会",
+            "聊天",
+            "会议",
+            "组会",
+            "讨论",
+            "协作",
+            "家人",
+            "朋友",
+        ],
     )
     if not default_social_relevant:
         snapshot = _social_relationship_snapshot(agent)
@@ -611,9 +638,7 @@ def choose_action(
     inertia_weight = float(behavior_cfg.get("inertia_weight", 0.25))
     # Open agents entertain more of the field before settling; the jitter
     # width is the closest thing choose_action has to "how firmly decided".
-    decision_noise = float(behavior_cfg.get("decision_noise", 0.18)) * trait_modifier(
-        agent, "decision_noise"
-    )
+    decision_noise = float(behavior_cfg.get("decision_noise", 0.18)) * trait_modifier(agent, "decision_noise")
     avoidance_bonus_scale = float(behavior_cfg.get("avoidance_bonus_scale", 1.1))
     need_weights = behavior_cfg.get("need_weights", {}) if isinstance(behavior_cfg, dict) else {}
     energy_w = float(need_weights.get("energy", 0.45))
@@ -634,11 +659,15 @@ def choose_action(
     time_pressure = float(s.get("time_pressure", 0.25))
     commitment_level = _activity_commitment_level(activity)
     commitment_weight = _commitment_weight(commitment_level)
-    relation_snapshot = _social_relationship_snapshot(agent) if use_social_network else {
-        "obligation": 0.5,
-        "friction": 0.5,
-        "support": 0.5,
-    }
+    relation_snapshot = (
+        _social_relationship_snapshot(agent)
+        if use_social_network
+        else {
+            "obligation": 0.5,
+            "friction": 0.5,
+            "support": 0.5,
+        }
+    )
     driver_labels = {
         "stress_avoidance": "压力驱动",
         "low_mood_avoidance": "低情绪回避",
@@ -727,7 +756,9 @@ def choose_action(
                     if float(s.get("stress", 0.5)) > 0.60 or float(s.get("fatigue_debt", 0.2)) > 0.55:
                         base += 0.12
                     components["growth_interest"] = components.get("growth_interest", 0.0) + base
-        elif activity_growth_matches and any(k in act for k in ["练习", "学习", "继续", "整理", "完成", "阅读"]):
+        elif activity_growth_matches and any(
+            k in act for k in ["练习", "学习", "继续", "整理", "完成", "阅读"]
+        ):
             components["growth_skill"] = components.get("growth_skill", 0.0) + 0.20
 
         if act in recent_actions:
@@ -754,15 +785,28 @@ def choose_action(
             if thought_suggestion and (thought_suggestion in act or act in thought_suggestion):
                 components["suggested_by_thought"] = 0.85 * thought_intensity
             if thought_source in {"external_event", "policy"}:
-                if quick or progress or maintain or any(k in act_blob for k in ["查看", "调整", "确认", "避开", "改线", "通知", "消息"]):
+                if (
+                    quick
+                    or progress
+                    or maintain
+                    or any(k in act_blob for k in ["查看", "调整", "确认", "避开", "改线", "通知", "消息"])
+                ):
                     components["external_trigger"] = 0.65 * thought_intensity
-            if thought_source == "social" and (social or any(k in act_blob for k in ["回复", "联系", "消息", "沟通", "确认"])):
+            if thought_source == "social" and (
+                social or any(k in act_blob for k in ["回复", "联系", "消息", "沟通", "确认"])
+            ):
                 components["social_trigger"] = 0.75 * thought_intensity
-            if thought_source == "task" and (quick or progress or maintain or any(k in act_blob for k in ["待办", "处理", "确认", "完成"])):
+            if thought_source == "task" and (
+                quick or progress or maintain or any(k in act_blob for k in ["待办", "处理", "确认", "完成"])
+            ):
                 components["task_trigger"] = 0.70 * thought_intensity
-            if thought_kind == "hunger" and any(k in act_blob for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]):
+            if thought_kind == "hunger" and any(
+                k in act_blob for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]
+            ):
                 components["need_trigger"] = 0.80 * thought_intensity
-            if thought_kind == "recovery" and (restorative or any(k in act_blob for k in ["休息", "放松", "缓", "散步", "咖啡"])):
+            if thought_kind == "recovery" and (
+                restorative or any(k in act_blob for k in ["休息", "放松", "缓", "散步", "咖啡"])
+            ):
                 components["need_trigger"] = 0.70 * thought_intensity
             if thought_source == "impulse" and (avoidant or quick or restorative or social):
                 components["impulse_pull"] = 0.65 * thought_intensity
@@ -851,15 +895,26 @@ def choose_action(
             impulse_pool: list[str] = []
             for option in options:
                 option_styles = _action_style_tags(option)
-                if thought_source == "impulse" and option_styles & {"avoidant", "quick", "restorative", "social"}:
+                if thought_source == "impulse" and option_styles & {
+                    "avoidant",
+                    "quick",
+                    "restorative",
+                    "social",
+                }:
                     impulse_pool.append(option)
                 elif thought_source == "social" and "social" in option_styles:
                     impulse_pool.append(option)
                 elif thought_kind == "recovery" and "restorative" in option_styles:
                     impulse_pool.append(option)
-                elif thought_kind == "hunger" and any(k in option for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]):
+                elif thought_kind == "hunger" and any(
+                    k in option for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]
+                ):
                     impulse_pool.append(option)
-                elif thought_source in {"external_event", "policy", "task"} and option_styles & {"quick", "progress", "maintain"}:
+                elif thought_source in {"external_event", "policy", "task"} and option_styles & {
+                    "quick",
+                    "progress",
+                    "maintain",
+                }:
                     impulse_pool.append(option)
             pool = impulse_pool or options
             if time_gate:
@@ -868,7 +923,9 @@ def choose_action(
                 # sense at this hour — unless every one of them does, in
                 # which case the draw stands: an odd hour is rare, not
                 # impossible.
-                fitting = [option for option in pool if _action_time_fit(option, current_minutes)[0] != _TIME_BAD]
+                fitting = [
+                    option for option in pool if _action_time_fit(option, current_minutes)[0] != _TIME_BAD
+                ]
                 if fitting:
                     pool = fitting
             choice = random.choice(pool)

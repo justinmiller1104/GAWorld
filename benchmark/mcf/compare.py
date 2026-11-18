@@ -25,9 +25,10 @@ __all__ = ["compare_arms", "compare_repeated_runs", "time_to_minute", "NEUTRAL_V
 
 
 def time_to_minute(time_str):
-    """"14:00" (HH:MM) -> minute of day (840); the trigger-tick arithmetic."""
+    """ "14:00" (HH:MM) -> minute of day (840); the trigger-tick arithmetic."""
     hours, minutes = time_str.split(":")
     return int(hours) * 60 + int(minutes)
+
 
 # Verdicts meaning "no measurable effect". A MISSING/UNRELIABLE arm must
 # never map to one of these (insufficient data is not evidence of no effect).
@@ -37,8 +38,10 @@ MCF_LIMITATIONS = (
     "MCF validation is attached for context only and is kept separate from the "
     "effect-difference section: baseline realism is not evidence of "
     "intervention-response accuracy; MCF validates, never selects the winning "
-    "intervention. The per-arm overall_error describes fit against survey "
-    "targets, not the size or direction of the intervention effect."
+    "intervention. The per-arm mean_category_error_not_for_frontier (never a "
+    "frontier input — MCF §1 forbids collapsing objectives into one score) "
+    "describes fit against survey targets, not the size or direction of the "
+    "intervention effect."
 )
 
 
@@ -108,11 +111,12 @@ def compare_arms(baseline_dir, intervention_dir, intervention_day, intervention_
     # whole-run count (the Phase 2.4 discrepancy: 2/288 per-slot mismatches
     # divided by 288 whole-run records shrank a 100% slot disagreement ~120x).
     for window_name, window_keys in _window_key_sets(
-        baseline_records, intervention_records, intervention_day, trigger_minute if intervention_time is not None else None
+        baseline_records,
+        intervention_records,
+        intervention_day,
+        trigger_minute if intervention_time is not None else None,
     ).items():
-        windows[window_name].update(
-            _window_stats(baseline_records, intervention_records, window_keys)
-        )
+        windows[window_name].update(_window_stats(baseline_records, intervention_records, window_keys))
 
     effect = _effect_verdict(status, windows)
     report = {
@@ -139,10 +143,7 @@ def compare_repeated_runs(baseline_dirs, intervention_dirs, intervention_day):
     the spread across runs — variation is reported alongside the mean
     differences, never collapsed into a single number.
     """
-    reports = [
-        compare_arms(b, i, intervention_day)
-        for b, i in zip(baseline_dirs, intervention_dirs)
-    ]
+    reports = [compare_arms(b, i, intervention_day) for b, i in zip(baseline_dirs, intervention_dirs)]
     report = dict(reports[0])
     per_run = [r["windows"]["post"]["max_abs_diff"] for r in reports]
     report["variation"] = {
@@ -200,9 +201,7 @@ def _day_diff(baseline, intervention, day):
     common = b_keys & i_keys
     if not common:
         return 0.0
-    mismatches = sum(
-        1 for k in common if baseline["records"][k] != intervention["records"][k]
-    )
+    mismatches = sum(1 for k in common if baseline["records"][k] != intervention["records"][k])
     return mismatches / len(baseline["records"])
 
 
@@ -216,9 +215,7 @@ def _time_diff(baseline, intervention, time):
     common = b_keys & i_keys
     if not common:
         return 0.0
-    mismatches = sum(
-        1 for k in common if baseline["records"][k] != intervention["records"][k]
-    )
+    mismatches = sum(1 for k in common if baseline["records"][k] != intervention["records"][k])
     return mismatches / len(baseline["records"])
 
 
@@ -308,7 +305,18 @@ def _mcf_attach(baseline_dir, intervention_dir):
     for arm, run_dir in (("baseline", baseline_dir), ("intervention", intervention_dir)):
         result = score_directory(run_dir, employed_agent_ids=(), tick_minutes=10)
         scores[arm] = {
-            "overall_error": result.overall_error,
+            # MCF §1: objectives are never collapsed into one weighted score,
+            # so no scalar error appears here. The mean over categories is
+            # kept only under a name that says it is a diagnostic, never a
+            # frontier input; the per-category errors mirror the frontier's
+            # two dimensions (frontier.assemble_error_vector).
+            "mean_category_error_not_for_frontier": result.overall_error,
+            "paid_work_error": result.per_category["paid_work"].get("error"),
+            "leisure_social_error": (
+                float(result.per_category["leisure"]["error"])
+                + float(result.per_category["socializing"]["error"])
+            )
+            / 2.0,
             "coverage": result.coverage,
             "frontier_valid": result.frontier_valid,
             "uncertainty_warnings": list(result.uncertainty_warnings),

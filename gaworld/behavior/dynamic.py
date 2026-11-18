@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # Leaf imports: both are stdlib-only, so this module keeps its "no heavy
 # dependencies" property.
 from gaworld.personality.traits import trait_modifier, traits_of
+from gaworld.settings.behavior import mcf_realism_enabled
 from gaworld.world.away import is_away_location
 from gaworld.world.spatial_tree import same_room
 
@@ -57,6 +58,7 @@ except ImportError:  # pragma: no cover — numpy is optional at import time
 # =========================================================================
 # Utilities
 # =========================================================================
+
 
 def _clip(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
@@ -95,10 +97,12 @@ def _contains_any(text: str, keywords: list) -> bool:
 # =========================================================================
 
 # How hard it is to interrupt an activity (0 = trivial, 1 = immovable).
-COMMITMENT_KEYWORDS: List[Tuple[float, List[str]]] = [
+# The sleep keywords in the 0.85 tier are a Phase-2.0 realism change,
+# gated behind behavior.mcf_realism: with the gate off the tier matches
+# the pre-change commitment table exactly.
+_COMMITMENT_KEYWORDS_BASE: List[Tuple[float, List[str]]] = [
     (0.95, ["考试", "面试", "手术", "急救", "值班", "开庭"]),
-    (0.85, ["开会", "会议", "上课", "教学", "培训", "演出", "比赛",
-            "睡觉", "睡眠", "入睡", "就寝", "睡前"]),
+    (0.85, ["开会", "会议", "上课", "教学", "培训", "演出", "比赛"]),
     (0.70, ["工作", "上班", "加班", "实验", "写代码", "值日"]),
     (0.55, ["做饭", "接孩子", "送孩子", "看病", "取快递"]),
     (0.40, ["通勤", "午饭", "晚饭", "吃饭", "购物", "买菜"]),
@@ -106,11 +110,27 @@ COMMITMENT_KEYWORDS: List[Tuple[float, List[str]]] = [
     (0.15, ["刷手机", "发呆", "休息", "闲逛", "聊天"]),
     (0.05, ["睡前准备", "个人时间"]),
 ]
+_SLEEP_KEYWORDS_MCF = ["睡觉", "睡眠", "入睡", "就寝", "睡前"]
+
+
+def commitment_keywords() -> list[tuple[float, list[str]]]:
+    """The active commitment table (sleep keywords only under mcf_realism)."""
+    if not mcf_realism_enabled():
+        return _COMMITMENT_KEYWORDS_BASE
+    return [
+        (level, list(keywords) + (_SLEEP_KEYWORDS_MCF if level == 0.85 else []))
+        for level, keywords in _COMMITMENT_KEYWORDS_BASE
+    ]
+
+
+# Backwards-compatible alias: existing readers keep working; the gate-aware
+# accessor is commitment_keywords().
+COMMITMENT_KEYWORDS = _COMMITMENT_KEYWORDS_BASE
 
 
 def activity_commitment(activity: str) -> float:
     """Return the commitment level of an activity (0–1)."""
-    for level, keywords in COMMITMENT_KEYWORDS:
+    for level, keywords in commitment_keywords():
         if _contains_any(activity, keywords):
             return level
     return 0.35  # default moderate commitment
@@ -120,22 +140,31 @@ def activity_commitment(activity: str) -> float:
 # 1.  InterruptEngine
 # =========================================================================
 
+
 class InterruptCandidate:
     """A potential schedule interruption."""
+
     __slots__ = (
-        "source", "kind", "activity", "reason", "priority",
-        "duration_minutes", "resumable", "mood_delta", "extra",
+        "source",
+        "kind",
+        "activity",
+        "reason",
+        "priority",
+        "duration_minutes",
+        "resumable",
+        "mood_delta",
+        "extra",
     )
 
     def __init__(
         self,
-        source: str,            # "environment", "social", "spontaneous", "task"
-        kind: str,              # sub-type, e.g. "weather_change", "encounter"
-        activity: str,          # proposed replacement activity
-        reason: str,            # human-readable reason
-        priority: float,        # 0–1, higher = more urgent
+        source: str,  # "environment", "social", "spontaneous", "task"
+        kind: str,  # sub-type, e.g. "weather_change", "encounter"
+        activity: str,  # proposed replacement activity
+        reason: str,  # human-readable reason
+        priority: float,  # 0–1, higher = more urgent
         duration_minutes: int = 30,
-        resumable: bool = True, # can the original activity resume after?
+        resumable: bool = True,  # can the original activity resume after?
         mood_delta: float = 0.0,
         extra: Optional[Dict] = None,
     ):
@@ -266,7 +295,7 @@ SPONTANEOUS_POOLS: Dict[str, List[Tuple[str, str, float]]] = {
 
 # Time-of-day filters: activities that don't make sense at certain hours
 _TIME_BLOCKED: Dict[str, List[Tuple[int, int]]] = {
-    "逛街购物": [(22 * 60, 7 * 60)],    # no shopping after 22:00
+    "逛街购物": [(22 * 60, 7 * 60)],  # no shopping after 22:00
     "约朋友出去": [(23 * 60, 6 * 60)],
     "唱歌": [(23 * 60, 8 * 60)],
     "去咖啡店": [(22 * 60, 6 * 60)],
@@ -345,8 +374,7 @@ def generate_spontaneous_urge(
     time_min = _time_to_minutes(time_str)
 
     # Filter by time-of-day
-    valid = [(act, thought, inten) for act, thought, inten in pool
-             if not _is_time_blocked(act, time_min)]
+    valid = [(act, thought, inten) for act, thought, inten in pool if not _is_time_blocked(act, time_min)]
     if not valid:
         valid = pool
 
@@ -361,10 +389,12 @@ def generate_spontaneous_urge(
     act, thought, intensity = valid[idx]
 
     # Personality scaling
-    personality_blob = " ".join([
-        str(agent.get("personality", "")),
-        str(agent.get("daily_life", "")),
-    ])
+    personality_blob = " ".join(
+        [
+            str(agent.get("personality", "")),
+            str(agent.get("daily_life", "")),
+        ]
+    )
     if _contains_any(personality_blob, ["外向", "活泼", "社交", "热情"]):
         if mood in ("happy", "lonely"):
             intensity *= 1.2
@@ -413,6 +443,7 @@ def _spontaneous_mood_delta(mood: str) -> float:
 # 2b. Need-Based Interrupts (hunger, fatigue, time pressure)
 # =========================================================================
 
+
 def generate_need_interrupts(
     agent: Dict,
     time_str: Optional[str] = None,
@@ -439,16 +470,18 @@ def generate_need_interrupts(
             if 11 * 60 <= time_min <= 13 * 60 or 17 * 60 <= time_min <= 19 * 60:
                 meal_bonus = 0.12
         intensity = _clip((hunger - 0.45) * 1.25 + meal_bonus, 0.0, 0.90)
-        candidates.append(InterruptCandidate(
-            source="need",
-            kind="hunger",
-            activity="找点吃的",
-            reason=f"肚子有点占据注意力，想先找点吃的。(hunger={hunger:.2f})",
-            priority=intensity,
-            duration_minutes=random.randint(20, 45),
-            resumable=True,
-            mood_delta=0.02,
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="need",
+                kind="hunger",
+                activity="找点吃的",
+                reason=f"肚子有点占据注意力，想先找点吃的。(hunger={hunger:.2f})",
+                priority=intensity,
+                duration_minutes=random.randint(20, 45),
+                resumable=True,
+                mood_delta=0.02,
+            )
+        )
 
     # --- Fatigue / low energy ---
     if energy < 0.40 or fatigue > 0.60:
@@ -459,30 +492,34 @@ def generate_need_interrupts(
         else:
             act, reason = "休息片刻", "身体有点撑不住，想临时缓一缓。"
             duration = random.randint(10, 20)
-        candidates.append(InterruptCandidate(
-            source="need",
-            kind="recovery",
-            activity=act,
-            reason=f"{reason}(energy={energy:.2f}, fatigue={fatigue:.2f})",
-            priority=intensity,
-            duration_minutes=duration,
-            resumable=True,
-            mood_delta=0.01,
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="need",
+                kind="recovery",
+                activity=act,
+                reason=f"{reason}(energy={energy:.2f}, fatigue={fatigue:.2f})",
+                priority=intensity,
+                duration_minutes=duration,
+                resumable=True,
+                mood_delta=0.01,
+            )
+        )
 
     # --- Time pressure ---
     if time_pressure > 0.65:
         intensity = _clip((time_pressure - 0.55) * 1.35, 0.0, 0.80)
-        candidates.append(InterruptCandidate(
-            source="task",
-            kind="time_pressure",
-            activity="处理待办",
-            reason=f"时间压力突然冒出来，想先把最急的事处理掉。(tp={time_pressure:.2f})",
-            priority=intensity,
-            duration_minutes=random.randint(15, 40),
-            resumable=True,
-            mood_delta=-0.02,
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="task",
+                kind="time_pressure",
+                activity="处理待办",
+                reason=f"时间压力突然冒出来，想先把最急的事处理掉。(tp={time_pressure:.2f})",
+                priority=intensity,
+                duration_minutes=random.randint(15, 40),
+                resumable=True,
+                mood_delta=-0.02,
+            )
+        )
 
     return candidates
 
@@ -490,6 +527,7 @@ def generate_need_interrupts(
 # =========================================================================
 # 2c. Inbox / Social Message Triggers
 # =========================================================================
+
 
 def generate_inbox_interrupts(
     agent: Dict,
@@ -505,24 +543,25 @@ def generate_inbox_interrupts(
     if inbox_messages:
         has_trigger = True
     elif social_context:
-        trigger_kws = ["@", "提到", "回复", "消息", "邀请", "请求",
-                       "留言", "呼叫", "私信", "通知"]
+        trigger_kws = ["@", "提到", "回复", "消息", "邀请", "请求", "留言", "呼叫", "私信", "通知"]
         if _contains_any(social_context, trigger_kws):
             has_trigger = True
 
     if has_trigger:
         intensity = _clip(0.40 + social_need * 0.25, 0.0, 0.75)
-        candidates.append(InterruptCandidate(
-            source="social",
-            kind="inbox_message",
-            activity="回复消息",
-            reason="突然想到有人可能在等回应，想先处理一下关系或消息。",
-            priority=intensity,
-            duration_minutes=random.randint(5, 15),
-            resumable=True,
-            mood_delta=0.02,
-            extra={"inbox_count": len(inbox_messages) if inbox_messages else 0},
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="social",
+                kind="inbox_message",
+                activity="回复消息",
+                reason="突然想到有人可能在等回应，想先处理一下关系或消息。",
+                priority=intensity,
+                duration_minutes=random.randint(5, 15),
+                resumable=True,
+                mood_delta=0.02,
+                extra={"inbox_count": len(inbox_messages) if inbox_messages else 0},
+            )
+        )
 
     return candidates
 
@@ -530,6 +569,7 @@ def generate_inbox_interrupts(
 # =========================================================================
 # 3.  SocialChainResolver
 # =========================================================================
+
 
 def detect_co_located_agents(
     agent: Dict,
@@ -557,7 +597,11 @@ def detect_co_located_agents(
         other_loc = other.get("locations", {}).get("current", "")
         if is_away_location(other_loc):
             continue
-        if other_loc == my_loc and not other.get("locations", {}).get("in_transit") and same_room(agent, other):
+        if (
+            other_loc == my_loc
+            and not other.get("locations", {}).get("in_transit")
+            and same_room(agent, other)
+        ):
             co_located.append(other)
     return co_located
 
@@ -639,8 +683,9 @@ def generate_social_interrupts(
             priority = 0.30 + closeness * 0.15
         else:
             # Stranger-ish: behaviour contagion
-            if other_activity and _contains_any(other_activity,
-                    ["排队", "围观", "买", "奶茶", "咖啡", "促销"]):
+            if other_activity and _contains_any(
+                other_activity, ["排队", "围观", "买", "奶茶", "咖啡", "促销"]
+            ):
                 act = f"跟着{other_name}一起{other_activity}"
                 reason = f"看到{other_name}在{other_activity}，好奇凑了过去。"
                 duration = random.randint(10, 20)
@@ -648,18 +693,23 @@ def generate_social_interrupts(
             else:
                 continue
 
-        candidates.append(InterruptCandidate(
-            source="social",
-            kind="encounter" if closeness > 0.40 else "contagion",
-            activity=act,
-            reason=reason,
-            priority=_clip(priority, 0.15, 0.80),
-            duration_minutes=duration,
-            resumable=True,
-            mood_delta=0.03 + closeness * 0.05,
-            extra={"other_agent_id": other_id, "other_name": other_name,
-                   "closeness": round(closeness, 2)},
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="social",
+                kind="encounter" if closeness > 0.40 else "contagion",
+                activity=act,
+                reason=reason,
+                priority=_clip(priority, 0.15, 0.80),
+                duration_minutes=duration,
+                resumable=True,
+                mood_delta=0.03 + closeness * 0.05,
+                extra={
+                    "other_agent_id": other_id,
+                    "other_name": other_name,
+                    "closeness": round(closeness, 2),
+                },
+            )
+        )
 
     return candidates
 
@@ -701,9 +751,9 @@ _ENV_RESPONSE_MAP: Dict[str, List[Tuple[str, str, float, int]]] = {
 
 # Personality modifiers for environment response
 _PERSONALITY_RESPONSE_MODIFIERS: Dict[str, Dict[str, float]] = {
-    "cautious":  {"weather": 1.3, "traffic": 1.2, "emergency": 1.1, "commercial": 0.7, "news": 0.8},
+    "cautious": {"weather": 1.3, "traffic": 1.2, "emergency": 1.1, "commercial": 0.7, "news": 0.8},
     "adventurous": {"weather": 0.7, "traffic": 0.8, "emergency": 1.0, "commercial": 1.2, "news": 1.1},
-    "curious":   {"weather": 0.9, "traffic": 0.9, "emergency": 1.0, "commercial": 1.4, "news": 1.5},
+    "curious": {"weather": 0.9, "traffic": 0.9, "emergency": 1.0, "commercial": 1.4, "news": 1.5},
     "pragmatic": {"weather": 1.1, "traffic": 1.3, "emergency": 1.0, "commercial": 0.8, "news": 0.7},
 }
 
@@ -742,11 +792,13 @@ def _classify_personality(agent: Dict) -> str:
         best_trait_type = max(scored, key=lambda name: scored[name])
         if scored[best_trait_type] >= _ARCHETYPE_FLOOR:
             return best_trait_type
-    blob = " ".join([
-        str(agent.get("personality", "")),
-        str(agent.get("values", "")),
-        str(agent.get("daily_life", "")),
-    ])
+    blob = " ".join(
+        [
+            str(agent.get("personality", "")),
+            str(agent.get("values", "")),
+            str(agent.get("daily_life", "")),
+        ]
+    )
     best_type = "pragmatic"
     best_score = 0
     for ptype, keywords in _PERSONALITY_KEYWORDS.items():
@@ -795,8 +847,10 @@ def _classify_event_type(event: Dict) -> Tuple[str, str]:
         return "traffic", "congestion"
 
     # 3. Weather / natural — prefer structured type/topic over wording.
-    if topic == "weather" or ev_type in ("weather", "natural") or _contains_any(
-        desc, ["雨", "雪", "风", "高温", "暴风", "冰雹", "寒潮", "降温"]
+    if (
+        topic == "weather"
+        or ev_type in ("weather", "natural")
+        or _contains_any(desc, ["雨", "雪", "风", "高温", "暴风", "冰雹", "寒潮", "降温"])
     ):
         if _contains_any(desc, ["暴风", "台风", "暴雨", "雷暴", "强降雨"]):
             return "weather", "storm"
@@ -883,8 +937,9 @@ def generate_environment_interrupts(
         # Apply personality modifier
         priority *= p_mods.get(category, 1.0)
         # Apply impact-tag boost (consume the structured signal, P1).
-        tag_boost = max((_IMPACT_TAG_PRIORITY_BOOST[t] for t in tags
-                         if t in _IMPACT_TAG_PRIORITY_BOOST), default=0.0)
+        tag_boost = max(
+            (_IMPACT_TAG_PRIORITY_BOOST[t] for t in tags if t in _IMPACT_TAG_PRIORITY_BOOST), default=0.0
+        )
         priority += tag_boost
         # Anomaly escalation (P2).
         is_anomaly = bool(event.get("anomaly"))
@@ -898,19 +953,26 @@ def generate_environment_interrupts(
         desc = str(event.get("description", event.get("name", ""))).strip()
         reason = f"{desc}——{act}" if desc else act
 
-        candidates.append(InterruptCandidate(
-            source="environment",
-            kind=f"{category}_{sub_type}",
-            activity=act,
-            reason=reason,
-            priority=_clip(priority, 0.10, 0.95),
-            duration_minutes=dur,
-            resumable=resumable,
-            mood_delta=-severity * 0.08 if category in ("emergency", "weather") or is_anomaly else 0.0,
-            extra={"event_type": category, "sub_type": sub_type,
-                   "severity": round(severity, 2), "impact_tags": tags,
-                   "anomaly": is_anomaly, "anomaly_score": round(anomaly_score, 2)},
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="environment",
+                kind=f"{category}_{sub_type}",
+                activity=act,
+                reason=reason,
+                priority=_clip(priority, 0.10, 0.95),
+                duration_minutes=dur,
+                resumable=resumable,
+                mood_delta=-severity * 0.08 if category in ("emergency", "weather") or is_anomaly else 0.0,
+                extra={
+                    "event_type": category,
+                    "sub_type": sub_type,
+                    "severity": round(severity, 2),
+                    "impact_tags": tags,
+                    "anomaly": is_anomaly,
+                    "anomaly_score": round(anomaly_score, 2),
+                },
+            )
+        )
 
     return candidates
 
@@ -918,6 +980,7 @@ def generate_environment_interrupts(
 # =========================================================================
 # 4a. Local physical reactions (P1)
 # =========================================================================
+
 
 def generate_local_physical_interrupts(
     agent: Dict,
@@ -931,8 +994,10 @@ def generate_local_physical_interrupts(
     an empty list when no snapshot is available or the agent is moving,
     so the feature is naturally gated by whether P0 populated the data.
     """
-    state = local_physical if isinstance(local_physical, dict) else (
-        agent.get("_local_physical") if isinstance(agent, dict) else None
+    state = (
+        local_physical
+        if isinstance(local_physical, dict)
+        else (agent.get("_local_physical") if isinstance(agent, dict) else None)
     )
     if not isinstance(state, dict) or state.get("in_transit"):
         return []
@@ -945,18 +1010,19 @@ def generate_local_physical_interrupts(
 
     # Venue closed: you cannot do the intended thing here → must relocate.
     if state.get("is_open", True) is False:
-        candidates.append(InterruptCandidate(
-            source="environment",
-            kind="venue_closed",
-            activity="改去其他开门的地方",
-            reason=f"{location}此刻不在营业时间，得换个地方",
-            priority=0.55,
-            duration_minutes=20,
-            resumable=False,
-            mood_delta=-0.03,
-            extra={"event_type": "local_physical", "sub_type": "venue_closed",
-                   "location": location},
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="environment",
+                kind="venue_closed",
+                activity="改去其他开门的地方",
+                reason=f"{location}此刻不在营业时间，得换个地方",
+                priority=0.55,
+                duration_minutes=20,
+                resumable=False,
+                mood_delta=-0.03,
+                extra={"event_type": "local_physical", "sub_type": "venue_closed", "location": location},
+            )
+        )
 
     # Overcrowding: discomfort scales with how packed it is. An emergent
     # crowd *surge* (P2 anomaly) escalates priority and forces relocation.
@@ -964,24 +1030,31 @@ def generate_local_physical_interrupts(
     ratio = _f(state.get("occupancy_ratio", 0.0), 0.0)
     is_anomaly = bool(state.get("anomaly"))
     if crowding == "非常拥挤" or is_anomaly:
-        candidates.append(InterruptCandidate(
-            source="environment",
-            kind="crowd_anomaly" if is_anomaly else "crowd_packed",
-            activity="尽快离开拥挤区域" if is_anomaly else "避开人群换个地方",
-            reason=(
-                f"{location}人流突然激增，想尽快离开" if is_anomaly
-                else f"{location}此刻非常拥挤，想换个清静点的地方"
-            ),
-            priority=_clip((0.55 if is_anomaly else 0.30) + ratio * 0.25,
-                           0.20, 0.80 if is_anomaly else 0.60),
-            duration_minutes=20,
-            resumable=not is_anomaly,
-            mood_delta=-0.07 if is_anomaly else -0.04,
-            extra={"event_type": "local_physical",
-                   "sub_type": "crowd_anomaly" if is_anomaly else "crowd_packed",
-                   "location": location, "occupancy_ratio": round(ratio, 2),
-                   "anomaly": is_anomaly},
-        ))
+        candidates.append(
+            InterruptCandidate(
+                source="environment",
+                kind="crowd_anomaly" if is_anomaly else "crowd_packed",
+                activity="尽快离开拥挤区域" if is_anomaly else "避开人群换个地方",
+                reason=(
+                    f"{location}人流突然激增，想尽快离开"
+                    if is_anomaly
+                    else f"{location}此刻非常拥挤，想换个清静点的地方"
+                ),
+                priority=_clip(
+                    (0.55 if is_anomaly else 0.30) + ratio * 0.25, 0.20, 0.80 if is_anomaly else 0.60
+                ),
+                duration_minutes=20,
+                resumable=not is_anomaly,
+                mood_delta=-0.07 if is_anomaly else -0.04,
+                extra={
+                    "event_type": "local_physical",
+                    "sub_type": "crowd_anomaly" if is_anomaly else "crowd_packed",
+                    "location": location,
+                    "occupancy_ratio": round(ratio, 2),
+                    "anomaly": is_anomaly,
+                },
+            )
+        )
 
     return candidates
 
@@ -1024,7 +1097,9 @@ def generate_cascade_interrupts(
 ) -> List[InterruptCandidate]:
     """Given a primary environment interrupt, generate possible knock-on
     effects as additional lower-priority interrupts."""
-    cascade_key = f"{primary_interrupt.extra.get('event_type', '')}_{primary_interrupt.extra.get('sub_type', '')}"
+    cascade_key = (
+        f"{primary_interrupt.extra.get('event_type', '')}_{primary_interrupt.extra.get('sub_type', '')}"
+    )
     chains = EVENT_CASCADES.get(cascade_key, [])
     if not chains:
         return []
@@ -1033,26 +1108,29 @@ def generate_cascade_interrupts(
     for desc, severity, prob, mood_d in chains:
         if random.random() > prob:
             continue
-        results.append(InterruptCandidate(
-            source="environment",
-            kind="cascade",
-            activity=desc.split("，")[0] if "，" in desc else desc[:8],
-            reason=f"连锁反应：{desc}",
-            priority=_clip(primary_interrupt.priority * 0.5 + severity * 0.3, 0.05, 0.60),
-            duration_minutes=random.randint(10, 25),
-            resumable=True,
-            mood_delta=mood_d,
-            extra={
-                "cascade_from": cascade_key,
-                "severity": round(severity, 2),
-            },
-        ))
+        results.append(
+            InterruptCandidate(
+                source="environment",
+                kind="cascade",
+                activity=desc.split("，")[0] if "，" in desc else desc[:8],
+                reason=f"连锁反应：{desc}",
+                priority=_clip(primary_interrupt.priority * 0.5 + severity * 0.3, 0.05, 0.60),
+                duration_minutes=random.randint(10, 25),
+                resumable=True,
+                mood_delta=mood_d,
+                extra={
+                    "cascade_from": cascade_key,
+                    "severity": round(severity, 2),
+                },
+            )
+        )
     return results
 
 
 # =========================================================================
 # 5.  Schedule Insertion Helpers
 # =========================================================================
+
 
 def insert_activity_into_schedule(
     schedule: List[Tuple[str, str]],
@@ -1153,6 +1231,10 @@ def _apply_interrupt_cooldown(
     record. Expiry is natural: a record is dropped once now is past its
     window.
     """
+    # Phase-2.1 realism change, gated: with the gate off there is no
+    # cooldown suppression at all (pre-change dynamics).
+    if not mcf_realism_enabled():
+        return candidates
     now = _time_to_minutes(time_str)
     if now is None:
         return candidates
@@ -1229,7 +1311,8 @@ def evaluate_step_dynamics(
 
     # --- 1. Environment responses ---
     env_candidates = generate_environment_interrupts(
-        agent, env_events,
+        agent,
+        env_events,
         current_location=agent.get("locations", {}).get("current", ""),
     )
     # Cool down before cascade generation: cascade chains derive from the
@@ -1250,7 +1333,9 @@ def evaluate_step_dynamics(
     #     that snapshot this yields nothing, so it's self-gating.
     candidates.extend(
         generate_local_physical_interrupts(
-            agent, agent.get("_local_physical"), current_activity=scheduled_activity,
+            agent,
+            agent.get("_local_physical"),
+            current_activity=scheduled_activity,
         )
     )
 
@@ -1261,7 +1346,8 @@ def evaluate_step_dynamics(
 
     # --- 3. Inbox / social-message triggers ---
     inbox_candidates = generate_inbox_interrupts(
-        agent, social_context=social_context,
+        agent,
+        social_context=social_context,
         inbox_messages=inbox_messages,
     )
     candidates.extend(inbox_candidates)
@@ -1272,7 +1358,9 @@ def evaluate_step_dynamics(
 
     # --- 5. Spontaneous urges ---
     spontaneous = generate_spontaneous_urge(
-        agent, time_str=time_str, current_activity=scheduled_activity,
+        agent,
+        time_str=time_str,
+        current_activity=scheduled_activity,
     )
     if spontaneous:
         candidates.append(spontaneous)
@@ -1284,10 +1372,7 @@ def evaluate_step_dynamics(
     # --- 6. Evaluate ---
     winner = evaluate_interrupts(candidates, scheduled_activity, agent)
 
-    social_encounters = [
-        c.to_dict() for c in social_candidates
-        if c.extra.get("other_agent_id")
-    ]
+    social_encounters = [c.to_dict() for c in social_candidates if c.extra.get("other_agent_id")]
     # Also include inbox-triggered social encounters
     for ic in inbox_candidates:
         social_encounters.append(ic.to_dict())
@@ -1305,11 +1390,12 @@ def evaluate_step_dynamics(
             "cascade_events": cascade_events,
         }
 
-    # Continue-vs-replace: a winner whose activity equals the currently
-    # effective activity is a continue, not a change — re-inserting it would
-    # rewrite the schedule and re-resolve location for no behavioural delta.
-    # Mood / social side-effects are still reported.
-    if winner.activity == scheduled_activity:
+    # Continue-vs-replace (Phase-2.1, gated): a winner whose activity equals
+    # the currently effective activity is a continue, not a change —
+    # re-inserting it would rewrite the schedule and re-resolve location for
+    # no behavioural delta. Mood / social side-effects are still reported.
+    # With the gate off (default), the pre-change path replaces as before.
+    if mcf_realism_enabled() and winner.activity == scheduled_activity:
         mood_delta = winner.mood_delta
         for ce in cascade_events:
             mood_delta += ce.get("mood_delta", 0.0)
@@ -1381,6 +1467,7 @@ def _no_change_result(scheduled_activity: str) -> Dict[str, Any]:
 # =========================================================================
 # 7. Bridge API — compatible with legacy maybe_generate_transient_thought
 # =========================================================================
+
 
 def dynamic_transient_thought(
     agent: Dict,

@@ -3676,6 +3676,16 @@ def run_simulation():
                 )
 
     print("\n✅ 模拟完成")
+    # Close every open activity span so the final segment is an explicit row,
+    # not an implicit tail the scorer has to guess at.
+    from gaworld.memory.experience import close_agent_span as _close_agent_span
+
+    for _agent_id in agents_by_id:
+        _close_agent_span(
+            _agent_id,
+            day if "day" in locals() else start_day - 1,
+            time_str if isinstance(locals().get("time_str"), str) else "00:00",
+        )
     if visualizer is not None:
         visualizer.finalize()
     hook_bus.emit(

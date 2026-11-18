@@ -255,17 +255,13 @@ def human_realism_settings() -> dict[str, Any]:
             # calls that succeed, against two that fail plus a per-activity
             # top-up call for each one later.
             "activities_per_call": 3,
-
-            # Output-token budget for the ``actions`` task itself (Phase 2.0
+            # Output-token budget for the ``actions`` task (Phase 2.0
             # §2D). PILOT19's live console logged ``LLM output was truncated
-            # by max_tokens=512`` exactly on this task — 3-activity chunks
-            # still overrun 512 tokens when an agent writes long actions,
-            # and every truncation surfaced as "action space generation
-            # produced nothing". Only this task gets the raised limit; every
-            # other call keeps the provider's configured budget. This
-            # changes comparability with PILOT19 (which ran at the default
-            # 512) — see docs/MCF_GAWORLD.md §2.1.5.
-            "max_tokens": 1024,
+            # by max_tokens=512`` exactly on this task. The default here is
+            # the pre-change 512 — comparability with earlier runs; MCF
+            # experiment configs raise it to 1024 explicitly (docs/
+            # MCF_GAWORLD.md §2.1.5) under the mcf_realism gate below.
+            "max_tokens": 512,
         },
         "dynamic_behavior": {
             "enabled": True,
@@ -322,4 +318,32 @@ def human_realism_settings() -> dict[str, Any]:
                 "days": [3, 7],
             },
         },
+        # Top-level so the gate is one dotted path: behavior.mcf_realism.enabled.
+        "behavior": {
+            # MCF realism engine changes (Phase 2.0/2.1): sleep-keyword commitment
+            # tier, interrupt-cooldown registry, continue-vs-replace short-circuit
+            # and the 睡前-tail schedule completion. Off by default so a run with
+            # default configuration reproduces the pre-change dynamics exactly
+            # (GAWorld comparability rule); MCF runs opt in explicitly.
+            "mcf_realism": {
+                "enabled": False,
+            },
+        },
     }
+
+
+def mcf_realism_enabled(cfg=None) -> bool:
+    """Whether the Phase-2.0/2.1 realism-engine changes are active.
+
+    Default False: with the default configuration the simulated dynamics
+    reproduce the pre-change behaviour exactly, so earlier runs stay
+    comparable (GAWorld comparability rule; the opt-in travel switch is the
+    house pattern). MCF experiment runs enable it explicitly.
+    """
+    import os
+
+    from gaworld.settings import CONFIG
+
+    base = cfg if isinstance(cfg, dict) else CONFIG
+    enabled = bool(((base.get("behavior", {}) or {}).get("mcf_realism", {}) or {}).get("enabled", False))
+    return enabled or os.environ.get("GAWORLD_MCF_REALISM") == "1"

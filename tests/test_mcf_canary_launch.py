@@ -397,7 +397,7 @@ class TestPartialManifest(unittest.TestCase):
         assert json.loads(json.dumps(manifest)) == manifest, "manifest must round-trip JSON"
 
     def test_budget_reports_final_usage_after_kill(self):
-        _, wrapped, budget = prepare_canary(fake_config(), make_limits(max_calls=1), SIMPLE_PRICING, authorize=True)
+        wrapped, budget = prepare_canary(fake_config(), make_limits(max_calls=1), SIMPLE_PRICING, authorize=True)
         wrapped("p", task="planning")
         try:
             wrapped("p", task="planning")

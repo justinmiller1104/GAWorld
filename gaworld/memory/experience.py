@@ -88,6 +88,65 @@ def append_agent_episode(agent_id, episode, cfg=None):
         return
 
 
+# ---------------------------------------------------------------------------
+# Machine-readable activity spans: one explicit row per activity segment,
+# written on every activity transition and closed at run end. The MCF time-use
+# scorer prefers these over tick-snapshot reconstruction (which silently lost
+# coverage whenever a tick was missed).
+# ---------------------------------------------------------------------------
+
+# Open span per agent: {agent_id: {"day", "start", "activity", "location",
+# "purpose"}}. Module-level because spans bridge ticks while the per-tick
+# agent dict is fresh each tick; _reset_span_state() clears it between runs.
+_OPEN_SPANS: dict[int, dict] = {}
+
+
+def _reset_span_state():
+    _OPEN_SPANS.clear()
+
+
+def _write_span_row(agent_id, span, cfg=None):
+    row = {
+        "kind": "span",
+        "agent_id": agent_id,
+        "day": span["day"],
+        "start": span["start"],
+        "end": span["end"],
+        "activity": span["activity"],
+        "location": span.get("location", ""),
+        "purpose": span.get("purpose", ""),
+    }
+    append_agent_episode(agent_id, row, cfg=cfg)
+
+
+def record_activity_span(agent_id, day, time_str, activity, location="", purpose="", cfg=None):
+    """Note the agent's current activity; when it differs from the open span's
+    activity, close the open span at this tick and open a new one."""
+    open_span = _OPEN_SPANS.get(agent_id)
+    if open_span is not None and open_span["activity"] == activity and open_span["day"] == day:
+        return
+    if open_span is not None:
+        open_span["end"] = time_str
+        _write_span_row(agent_id, open_span, cfg=cfg)
+    _OPEN_SPANS[agent_id] = {
+        "day": day,
+        "start": time_str,
+        "activity": activity,
+        "location": location,
+        "purpose": purpose,
+    }
+
+
+def close_agent_span(agent_id, day, time_str, cfg=None):
+    """Close the agent's open span at run end (or day end) — the final span
+    must not stay implicit."""
+    open_span = _OPEN_SPANS.pop(agent_id, None)
+    if open_span is None:
+        return
+    open_span["end"] = time_str
+    _write_span_row(agent_id, open_span, cfg=cfg)
+
+
 def prune_and_decay_episodes(agent_id, cfg):
     if not isinstance(cfg, dict):
         cfg = {}

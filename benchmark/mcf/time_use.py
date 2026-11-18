@@ -447,6 +447,10 @@ def load_episodes(path: str | Path) -> list[Episode]:
             if not line:
                 continue
             row = json.loads(line)
+            # Explicit activity spans (sim-side emission) are consumed via
+            # load_spans; they are not tick snapshots.
+            if str(row.get("kind", "")) == "span":
+                continue
             agent_id = _row_agent_id(path, row)
             if agent_id is None:
                 continue
@@ -464,6 +468,66 @@ def load_episodes(path: str | Path) -> list[Episode]:
                 )
             )
     return episodes
+
+
+def load_spans(path: str | Path) -> list[dict[str, str | int]]:
+    """Load the sim-emitted activity spans (``kind == "span"`` rows) from an
+    episode JSONL. Empty when the file has none — the caller then falls back
+    to tick-snapshot reconstruction."""
+    spans: list[dict[str, str | int]] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if str(row.get("kind", "")) != "span":
+                continue
+            agent_id = _row_agent_id(path, row)
+            if agent_id is None:
+                continue
+            spans.append(
+                {
+                    "agent_id": int(agent_id),
+                    "day": int(row["day"]),
+                    "start": str(row["start"]),
+                    "end": str(row["end"]),
+                    "activity": str(row.get("activity", "")),
+                    "location": str(row.get("location", "")),
+                    "purpose": str(row.get("purpose", "")),
+                }
+            )
+    return spans
+
+
+def spans_daily_minutes(
+    spans: Iterable[Mapping[str, object]],
+) -> dict[int, dict[int, dict[str, int]]]:
+    """Per-agent, per-day minutes per category straight from span rows —
+    no tick-grid reconstruction, so a missed tick cannot lose coverage."""
+    result: dict[int, dict[int, dict[str, int]]] = {}
+    for span in spans:
+        agent_id = int(span["agent_id"])
+        day = int(span["day"])
+        try:
+            start = _parse_clock(str(span["start"]))
+            end = _parse_clock(str(span["end"]))
+        except ValueError:
+            continue
+        start = max(0, min(1440, start))
+        end = max(0, min(1440, end))
+        minutes = max(0, end - start)
+        if minutes == 0:
+            continue
+        purpose = str(span.get("purpose", ""))
+        if purpose in _COMMUTING_PURPOSES:
+            category = "commuting"
+        else:
+            category, _ = classify_activity(str(span.get("activity", "")))
+            category = category or UNKNOWN
+        day_map = result.setdefault(agent_id, {}).setdefault(day, _empty_minutes())
+        day_map[category] += minutes
+    return result
 
 
 def _coerce_episode(ep: Episode | Mapping[str, object]) -> Episode:
@@ -803,7 +867,38 @@ def score_directory(
         unattributed += count_unattributed(path)
         if not _AGENT_ID_RE.search(path.name):
             continue  # audit tables are not episodes; their unattributed rows are counted above
-        agent_daily = compute_daily_minutes(load_episodes(path), tick_minutes)
+        # Prefer the sim-emitted activity spans (tick-grid independent):
+        # span intervals are authoritative; snapshots outside every span of
+        # the same agent-day still count (they fill unspanned gaps). Files
+        # without spans fall back to pure snapshot reconstruction.
+        spans = load_spans(path)
+        if spans:
+            span_daily = spans_daily_minutes(spans)
+            span_intervals: dict[tuple[int, int], list[tuple[int, int]]] = {}
+            for span in spans:
+                try:
+                    s = max(0, min(1440, _parse_clock(str(span["start"]))))
+                    e = max(0, min(1440, _parse_clock(str(span["end"]))))
+                except ValueError:
+                    continue
+                span_intervals.setdefault((int(span["agent_id"]), int(span["day"])), []).append((s, e))
+            episodes = [
+                ep
+                for ep in load_episodes(path)
+                if not any(
+                    s <= _parse_clock(ep.time) < e for s, e in span_intervals.get((ep.agent_id, ep.day), ())
+                )
+            ]
+            snapshot_daily = compute_daily_minutes(episodes, tick_minutes)
+            agent_daily: dict[int, dict[int, dict[str, int]]] = {}
+            for source in (span_daily, snapshot_daily):
+                for agent_id, days in source.items():
+                    for day, minutes in days.items():
+                        target = agent_daily.setdefault(agent_id, {}).setdefault(day, _empty_minutes())
+                        for category, value in minutes.items():
+                            target[category] += value
+        else:
+            agent_daily = compute_daily_minutes(load_episodes(path), tick_minutes)
         for agent_id, days in agent_daily.items():
             daily.setdefault(agent_id, {}).update(days)
     result = score_against_targets(daily, employed_agents=employed_agent_ids)

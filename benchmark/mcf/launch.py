@@ -10,18 +10,16 @@ requires an explicit ``authorize=True`` plus either ``CONFIG["canary"]`` or
 
 from __future__ import annotations
 
-import dis
 import itertools
 import json
 import os
-import sys
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, NamedTuple
 
 from benchmark.mcf.canary import CanaryBudget, CanaryExceeded, CanaryLimits
 
@@ -59,6 +57,18 @@ class RunHandle:
             "outputs": [str(self.run_dir)],
             "config": self.config,
         }
+        # Comparability marker: a run that enables the gated Phase-2.0/2.1
+        # realism engine changes says so explicitly, so analyses never pool
+        # it with default-behaviour runs (MCF principle: comparability epochs
+        # must be explicit).
+        behaviour = (self.config or {}).get("behavior", {}) if isinstance(self.config, dict) else {}
+        if isinstance(behaviour, dict) and (behaviour.get("mcf_realism", {}) or {}).get("enabled"):
+            manifest["comparability"] = {
+                "epoch_marker": "mcf_realism",
+                "note": "Phase-2.0/2.1 realism-engine changes enabled "
+                "(sleep commitment tier, interrupt cooldown, continue-vs-replace, "
+                "睡前-tail completion); not comparable with default-config runs",
+            }
         self.manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
         return manifest
 
@@ -173,33 +183,21 @@ def _validate_pricing(pricing: Any) -> None:
             raise ValueError(f"pricing for {model!r} must define both 'input' and 'output' rates")
 
 
-class _CanaryHandle(tuple):
+class CanaryHandle(NamedTuple):
     """The (wrapped_llm, budget) pair returned by ``prepare_canary``.
 
-    One contract site unpacks three names (``_, wrapped, budget``) while all
-    others unpack two; adapt the yielded arity to the caller's
-    UNPACK_SEQUENCE oparg so both spellings work on the same object.
+    A plain tuple: all call sites unpack two names, and the budget is also
+    reachable as ``handle.budget``. (The old ``_CanaryHandle`` sniffed the
+    caller's UNPACK_SEQUENCE arity out of CPython bytecode to also serve a
+    three-name unpack — opcode-layout-dependent and unneeded.)
     """
 
-    _UNPACK_OPS: ClassVar[set[int]] = {
-        op for name, op in dis.opmap.items() if name.startswith("UNPACK_SEQUENCE")
-    }
+    wrapped: _CanaryLLM
+    budget: CanaryBudget
 
-    def __iter__(self):
-        arity = 2
-        try:
-            frame = sys._getframe(1)
-            offset = frame.f_lasti
-            code = frame.f_code.co_code
-            if code[offset] in self._UNPACK_OPS:
-                arity = code[offset + 1]
-        except Exception:
-            arity = 2
-        wrapped, budget = tuple.__iter__(self)
-        if arity == 3:
-            yield None
-        yield wrapped
-        yield budget
+    @property
+    def llm(self) -> _CanaryLLM:
+        return self.wrapped
 
 
 class _CanaryLLM:
@@ -349,7 +347,7 @@ def prepare_canary(
         est_tokens_in=est_in,
         est_tokens_out=est_out,
     )
-    return _CanaryHandle((wrapped, budget))
+    return CanaryHandle(wrapped, budget)
 
 
 def maybe_canary_llm(

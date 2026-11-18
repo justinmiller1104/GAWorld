@@ -124,7 +124,10 @@ def run_legs(
             status = "interrupted" if harness_error.startswith("budget: ") else "failed"
             stop_reason = harness_error
         elif not result.get("ok", True):
-            status = "failed"
+            # the harness may classify its own failure (a budget kill is an
+            # interruption — budget exhausted mid-leg — not a harness crash)
+            reported = result.get("status")
+            status = reported if reported in ("failed", "interrupted") else "failed"
             stop_reason = str(result.get("error") or "harness reported failure")
 
         # token honesty: measured only when BOTH counts are present and valid

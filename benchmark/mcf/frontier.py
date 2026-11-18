@@ -42,8 +42,8 @@ __all__ = [
 AXES: dict[str, object] = {
     "paid_work_error": lambda pc: float(pc["paid_work"]["error"]),
     "leisure_social_error": lambda pc: (
-        float(pc["leisure"]["error"]) + float(pc["socializing"]["error"])
-    ) / 2.0,
+        (float(pc["leisure"]["error"]) + float(pc["socializing"]["error"])) / 2.0
+    ),
 }
 _DEFAULT_AXES = tuple(AXES)
 
@@ -59,6 +59,7 @@ def axes_from_names(names) -> dict:
     if unknown:
         raise KeyError(f"unregistered frontier axes: {unknown}")
     return {n: AXES[n] for n in names}
+
 
 _DIMENSIONS = ("paid_work_error", "leisure_social_error")
 
@@ -155,12 +156,37 @@ def _dominates(a: tuple, b: tuple) -> bool:
     return all(x < y for x, y in zip(a, b))
 
 
-def pareto_frontier(points) -> list[tuple]:
-    """Nondominated set under componentwise minimization, deterministic order."""
-    unique = sorted({tuple(p) for p in points})
-    front = [
-        p for p in unique if not any(q != p and _dominates(q, p) for q in unique)
-    ]
+def pareto_frontier(points, report: list[dict] | None = None) -> list[tuple]:
+    """Nondominated set under componentwise minimization, deterministic order.
+
+    Points with a None or NaN component never enter the dominance
+    computation — NaN compares False on every axis and would silently
+    survive, and None is not a measurement. Documented choice: they are
+    EXCLUDED, not fatal — one malformed leg must not void the whole frontier.
+    When ``report`` is a list, each exclusion is appended as
+    ``{"point": [...], "reason": str}`` so callers surface what was dropped.
+    """
+    clean: list[tuple] = []
+    for p in points:
+        components = tuple(p)
+        bad = [i for i, v in enumerate(components) if v is None or (isinstance(v, float) and math.isnan(v))]
+        if bad:
+            if report is not None:
+                report.append(
+                    {
+                        "point": list(components),
+                        "reason": (
+                            "excluded: non-numeric component(s) at axis index "
+                            + ", ".join(map(str, bad))
+                            + " (None/NaN are not measurements and must not "
+                            "enter the dominance computation)"
+                        ),
+                    }
+                )
+            continue
+        clean.append(components)
+    unique = sorted({p for p in clean})
+    front = [p for p in unique if not any(q != p and _dominates(q, p) for q in unique)]
     return sorted(front)
 
 
@@ -170,6 +196,7 @@ def arch_compare(frontier_m1, frontier_m0) -> list:
     An explicit empty list means the architectures are equally capable or M0
     dominates — absence of gain is a reported result, not a missing one.
     """
+
     # §4 / paper Eq. 2: a point is excluded when an M0 frontier point WEAKLY
     # dominates it (better-or-equal on every axis, at least one strict) —
     # strict-on-all-axes (_dominates) would let ties on one axis through.
@@ -209,7 +236,14 @@ def paired_arch_stats(
         arch: sorted(set(arch_vectors) - set(reference_vectors)),
         reference: sorted(set(reference_vectors) - set(arch_vectors)),
     }
-    out: dict = {"arch": arch, "reference": reference, "matched_seeds": matched, "axes": {}, "unmatched": unmatched, "complete": not any(unmatched.values())}
+    out: dict = {
+        "arch": arch,
+        "reference": reference,
+        "matched_seeds": matched,
+        "axes": {},
+        "unmatched": unmatched,
+        "complete": not any(unmatched.values()),
+    }
     for axis in axes:
         diffs = [
             float(arch_vectors[s][axis]) - float(reference_vectors[s][axis])
@@ -221,11 +255,7 @@ def paired_arch_stats(
         ties = sum(d == 0 for d in diffs)
         n_eff = len(diffs) - ties
         mean = sum(diffs) / len(diffs) if diffs else 0.0
-        var = (
-            sum((d - mean) ** 2 for d in diffs) / (len(diffs) - 1)
-            if len(diffs) > 1
-            else 0.0
-        )
+        var = sum((d - mean) ** 2 for d in diffs) / (len(diffs) - 1) if len(diffs) > 1 else 0.0
         sd = math.sqrt(var)
         # dz is oriented toward improvement: (reference − arch)/sd, so a
         # positive dz means the architecture reduced the error vs the reference
@@ -237,8 +267,10 @@ def paired_arch_stats(
             p = min(1.0, 2 * tail)
         else:
             p = 1.0
-        verdict = "no-difference" if n_eff == 0 or improvements == worsenings else (
-            "improved" if improvements > worsenings else "worsened"
+        verdict = (
+            "no-difference"
+            if n_eff == 0 or improvements == worsenings
+            else ("improved" if improvements > worsenings else "worsened")
         )
         out["axes"][axis] = {
             "n": len(diffs),
@@ -315,7 +347,10 @@ def flat_dimensions(rows, axes: list | None = None) -> list[dict]:
     for r in rows:
         vector = (
             assemble_error_vector(
-                r["score_result"], config=str(r["config"]), seed=int(r["seed"]), fixture=bool(r.get("fixture", True))
+                r["score_result"],
+                config=str(r["config"]),
+                seed=int(r["seed"]),
+                fixture=bool(r.get("fixture", True)),
             )
             if "score_result" in r
             else r
@@ -396,9 +431,7 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
 
     configs_out: dict[str, dict] = {}
     for config in sorted(per_config):
-        legs = {
-            seed: v for seed, v in per_config[config].items() if not v.get("excluded")
-        }
+        legs = {seed: v for seed, v in per_config[config].items() if not v.get("excluded")}
         avg = average_across_seeds(config, legs, expected_seeds=want_seeds, axes=axis_names)
         if not legs and expected_seeds is None:
             avg["complete"] = True  # single gated-out leg: incompleteness is not the issue
@@ -410,8 +443,7 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         "all legs frontier-valid"
         if frontier_valid
         else (
-            "excluded legs: "
-            + "; ".join(v["reason"] for v in vectors if v.get("excluded"))
+            "excluded legs: " + "; ".join(v["reason"] for v in vectors if v.get("excluded"))
             if any(v.get("excluded") for v in vectors)
             else "no valid legs"
         )
@@ -446,8 +478,9 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
             "max_seed_spread": max(spreads_pw) if spreads_pw else None,
             "config_range": ranges_pw,
             "note": (
-                "between-seed spread >= between-config range: effect indistinguishable "
-                "from seed noise" if noisy else "config differences exceed seed spread"
+                "between-seed spread >= between-config range: effect indistinguishable from seed noise"
+                if noisy
+                else "config differences exceed seed spread"
             ),
         },
         "tuning_limit": [],

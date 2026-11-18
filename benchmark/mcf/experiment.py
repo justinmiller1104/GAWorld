@@ -53,7 +53,11 @@ except ImportError:  # replay module always present in-tree; keep launcher impor
     install_sequence_replay = None
     sim_time_stop_predicate = None
 
-__all__ = ["run_experiment", "fork_arms_from_checkpoint"]
+__all__ = ["run_experiment", "run_leg", "fork_arms_from_checkpoint"]
+
+# real per-leg runner (task 3753): lives in leg_runner, re-exported so the
+# dashboard's ``_build_harness`` finds ``experiment.run_leg``
+from benchmark.mcf.leg_runner import run_leg
 
 Harness = Callable[[dict[str, Any], "str | Path"], dict[str, Any]]
 
@@ -91,16 +95,23 @@ def run_experiment(
     intervention = _execute_arm("intervention", intervention_config, harness, root / "intervention")
 
     baseline["audit"] = []
-    intervention["audit"] = [_audit_intervention(spec, Path(baseline["run_dir"]), Path(intervention["run_dir"]))]
+    intervention["audit"] = [
+        _audit_intervention(spec, Path(baseline["run_dir"]), Path(intervention["run_dir"]))
+    ]
 
-    report = compare_arms(baseline["run_dir"], intervention["run_dir"], intervention_day=spec["trigger"]["day"])
+    report = compare_arms(
+        baseline["run_dir"], intervention["run_dir"], intervention_day=spec["trigger"]["day"]
+    )
     for arm_name, arm in (("baseline", baseline), ("intervention", intervention)):
         if not arm["complete"] and report["data_status"].get(arm_name) != "MISSING":
             # insufficient data is never evidence of no effect
             report["data_status"][arm_name] = "MISSING"
     if "MISSING" in report["data_status"].values():
         report["effect"] = {"verdict": "insufficient_data", "beneficial": False}
-    elif report["effect"]["verdict"] not in NEUTRAL_VERDICTS and report["windows"]["post"]["max_abs_diff"] == 0.0:
+    elif (
+        report["effect"]["verdict"] not in NEUTRAL_VERDICTS
+        and report["windows"]["post"]["max_abs_diff"] == 0.0
+    ):
         # complete arms (however small) with an exactly zero post-window diff:
         # a genuine no-effect, not missing data
         report["effect"] = {"verdict": "no_effect", "beneficial": False}
@@ -158,7 +169,9 @@ def fork_arms_from_checkpoint(
         # the boundary is the sim-time stop factory built from the trigger
         # (day/time) unless the arm carries its own stop predicate. Arms with
         # only a dict of recorded responses keep the Phase 2.5 memoizer.
-        run_replay = arm_name != "baseline" or bool(arm.get("recorded_responses")) or bool(arm.get("recorded_events"))
+        run_replay = (
+            arm_name != "baseline" or bool(arm.get("recorded_responses")) or bool(arm.get("recorded_events"))
+        )
         restore_replay = None
         if run_replay and install_sequence_replay is not None:
             trigger_time = trigger.get("time")
@@ -169,7 +182,9 @@ def fork_arms_from_checkpoint(
                 _, restore_replay = install_sequence_replay(list(arm["recorded_events"]), stop_predicate=stop)
                 replay_kind = "sequence"
             elif install_llm_replay is not None:
-                _, restore_replay = install_llm_replay(dict(arm.get("recorded_responses", {})), stop_predicate=stop)
+                _, restore_replay = install_llm_replay(
+                    dict(arm.get("recorded_responses", {})), stop_predicate=stop
+                )
                 replay_kind = "dict"
             else:
                 replay_kind = None
@@ -181,7 +196,9 @@ def fork_arms_from_checkpoint(
             window = {"start": "checkpoint", "stop": trigger}
             if run_replay:
                 result["replay"] = {"stop": trigger, "kind": replay_kind}
-            _patch_manifest(run_dir / "run_manifest.json", fork={"checkpoint": str(ckpt), "replay_window": window})
+            _patch_manifest(
+                run_dir / "run_manifest.json", fork={"checkpoint": str(ckpt), "replay_window": window}
+            )
             # the arm dir also carries the provenance manifest (the run dir is
             # a run-id subdir beneath it) so fork consumers can read the arm's
             # window without walking into the latest run
@@ -316,9 +333,7 @@ def _write_agent_state_files(run_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _audit_intervention(
-    spec: dict[str, Any], baseline_dir: Path, intervention_dir: Path
-) -> dict[str, Any]:
+def _audit_intervention(spec: dict[str, Any], baseline_dir: Path, intervention_dir: Path) -> dict[str, Any]:
     """One audit record from the run's own records — intended vs actual."""
     operation = spec["operation"]
     requested = {k: v for k, v in spec.get("kwargs", {}).items() if k != "agent_id"}
@@ -337,7 +352,11 @@ def _audit_intervention(
 
     # actual execution time / applied / before / after come from the run's
     # execution log, never from the spec
-    execs = [r for r in _read_jsonl(intervention_dir / "intervention_executions.jsonl") if r.get("name") == spec["name"]]
+    execs = [
+        r
+        for r in _read_jsonl(intervention_dir / "intervention_executions.jsonl")
+        if r.get("name") == spec["name"]
+    ]
     if execs:
         actual = execs[0]
         rec["actual_time"] = {"day": actual["day"], "time": actual["time"]}
@@ -369,7 +388,9 @@ def _audit_intervention(
         rec["applied"] = True
         rec["status"] = _APPLIED
     else:
-        rec["reason"] = "trigger never fired: no execution record and no episode divergence at/after the trigger"
+        rec["reason"] = (
+            "trigger never fired: no execution record and no episode divergence at/after the trigger"
+        )
     return rec
 
 

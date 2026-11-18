@@ -135,6 +135,9 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
     sampler = str(payload.get("sampler") or "endpoints")
     if sampler not in ("endpoints", "sobol"):
         return {}, "sampler must be 'endpoints' or 'sobol'"
+    harness = str(payload.get("harness") or "real")
+    if harness not in ("real", "stub"):
+        return {}, "harness must be 'real' or 'stub'"
     if sampler == "sobol":
         try:
             import benchmark.mcf.sampler  # noqa: F401
@@ -171,6 +174,7 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
         "parameters": list(params),
         "objectives": objectives,
         "sampler": sampler,
+        "harness": harness,
         "n_configs": n_configs,
         "n_seeds": n_seeds,
         "seeds": seeds,
@@ -266,17 +270,22 @@ def launch_experiment(exp_id: str, payload: dict[str, Any]) -> tuple[dict[str, A
     return {"job_id": job_id, "experiment_id": exp_id, "estimated_calls": estimated}, 202
 
 
-def _build_harness(exp: dict[str, Any]):
-    """The real per-leg runner. Deferred to the parallel benchmark work; a
-    missing capability raises so the job fails honestly instead of silently."""
-    from benchmark.mcf import experiment as experiment_mod
+def _is_stub(exp: dict[str, Any]) -> bool:
+    return exp.get("harness") == "stub" or os.environ.get("GAWORLD_OFFLINE") == "1"
 
-    factory = getattr(experiment_mod, "run_leg", None)
-    if factory is None:
-        raise RuntimeError(
-            "real per-leg harness not yet available in this build (benchmark/mcf leg runner pending)"
-        )
-    return factory
+
+def _build_harness(exp: dict[str, Any]):
+    """The real per-leg runner (``benchmark.mcf.leg_runner``): isolated run
+    dir, in-execution canary budget, the actual simulator vehicle. The stub
+    execution (explicit ``harness: "stub"`` experiment option, or a forced
+    ``GAWORLD_OFFLINE=1``) scores deterministic legs through the real scorer
+    with zero inference — tests and dry-runs can never fire live calls."""
+    from benchmark.mcf.leg_runner import make_leg_harness
+
+    limits = {k: v for k, v in (exp.get("budget") or {}).items() if v is not None}
+    return make_leg_harness(
+        limits=limits or None, stub=_is_stub(exp), model_info=dict(exp.get("model") or {})
+    )
 
 
 def _build_scorer(exp: dict[str, Any]):
@@ -315,8 +324,19 @@ def _run_job(exp_id: str) -> None:
                 for seed in exp["seeds"]
             ]
             run_root = os.path.join(_exp_dir(root, exp_id), arch["id"])
+            # stub legs declare their employed cohort (participants basis):
+            # without it paid_work scores as error=None and the frontier
+            # assembler rightly refuses the vector
+            from benchmark.mcf.leg_runner import STUB_EMPLOYED_AGENTS
+
+            employed = STUB_EMPLOYED_AGENTS if _is_stub(exp) else ()
             table = run_legs(
-                leg_pairs, harness=harness, run_root=run_root, limits=limits or None, scorer=scorer
+                leg_pairs,
+                harness=harness,
+                run_root=run_root,
+                limits=limits or None,
+                scorer=scorer,
+                employed_agent_ids=employed,
             )
             for row in table.get("legs", []):
                 row["arch"] = arch["id"]

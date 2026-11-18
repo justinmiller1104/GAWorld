@@ -1789,6 +1789,92 @@ def _studies() -> dict[str, Any]:
     }
 
 
+# -- MCF research workflow ------------------------------------------------------------
+
+
+def _mcf() -> dict[str, Any]:
+    created = _obj(
+        ("id", "name", "status"),
+        id=STR,
+        name=STR,
+        status=_d(STR, "draft / running / completed / completed_with_failures / failed"),
+        architectures=_d(_arr(OBJ), "id, label, flat config patch per architecture"),
+        reference_architecture=STR,
+        parameters=_d(_arr(STR), "band names from /api/mcf/bands"),
+        objectives=_d(_arr(STR), "error axes"),
+        sampler=STR,
+        n_configs=NUM,
+        n_seeds=NUM,
+        seeds=_arr(NUM),
+        budget=OBJ,
+        model=OBJ,
+        estimated_calls=NUM,
+        progress=OBJ,
+        last_error=STR,
+    )
+    return {
+        "/api/mcf/bands": {"get": _op(
+            "mcf", "Admissible parameter bands (bounds, dotted paths, sources)",
+            ok=_obj(bands=_arr(OBJ)),
+            errors={"501": "config space module not importable in this build"})},
+        "/api/mcf/experiments": {"get": _op(
+            "mcf", "Saved MCF experiments, newest first", ok=_obj(experiments=_arr(OBJ)))},
+        "/api/mcf/experiment": {
+            "post": _op(
+                "mcf", "Create an MCF experiment (persists under output/mcf/, runs nothing)",
+                body=_obj(
+                    ("name", "architectures"),
+                    name=STR,
+                    architectures=_d(_arr(OBJ), "[{id, label, patch}] — patch is flat dotted→value"),
+                    reference_architecture=STR,
+                    parameters=_d(_arr(STR), "band names from /api/mcf/bands"),
+                    objectives=_d(_arr(STR), "default: paid_work_error + leisure_social_error"),
+                    sampler=_d(STR, "endpoints (default) or sobol"),
+                    n_configs=NUM,
+                    n_seeds=NUM,
+                    seeds=_d(_arr(NUM), "explicit seed list (overrides n_seeds)"),
+                    budget=_d(OBJ, "max_calls / max_tokens / max_elapsed_seconds per leg"),
+                    model=_d(OBJ, "provider / model info recorded in the manifest"),
+                ),
+                ok=created,
+                status="201",
+                errors={"400": "Invalid spec", "501": "sobol sampling not yet available in this build"},
+            )},
+        "/api/mcf/experiment/{experiment_id}": {
+            "get": _op(
+                "mcf", "One experiment definition with status and progress",
+                ok=created, errors={"404": "Unknown experiment"})},
+        "/api/mcf/experiment/{experiment_id}/launch": {
+            "post": _op(
+                "mcf", "Launch the experiment's legs as a background job",
+                body=_obj(confirm_cost=_d(BOOL, "required true when the estimate exceeds the cost guard")),
+                ok=_obj(("job_id", "experiment_id", "estimated_calls"),
+                        job_id=STR, experiment_id=STR, estimated_calls=NUM),
+                status="202",
+                errors={"400": "Estimated model calls exceed the guard without confirm_cost=true",
+                        "404": "Unknown experiment",
+                        "409": "Experiment is already running"},
+            )},
+        "/api/mcf/experiment/{experiment_id}/results": {
+            "get": _op(
+                "mcf", "Per-configuration error vectors, Pareto fronts, A(M1|M0) and diagnostics",
+                ok=_obj(("id", "status", "progress", "results"), id=STR, status=STR,
+                        progress=OBJ, results=_d(OBJ, "null until at least one leg is scored")),
+                errors={"404": "Unknown experiment",
+                        "501": "k-dimensional objectives not yet available in this build"})},
+        "/api/mcf/experiment/{experiment_id}/report": {
+            "get": _op(
+                "mcf", "Deterministic Markdown report of the experiment",
+                ok=_obj(("experiment_id", "markdown"), experiment_id=STR, markdown=STR),
+                errors={"404": "Unknown experiment", "501": "results not available in this build"})},
+        "/api/mcf/experiment/{experiment_id}/export": {
+            "get": _op(
+                "mcf", "Complete experiment manifest (definition, legs, results) as JSON",
+                ok=_obj(("experiment", "legs", "results"), experiment=OBJ, legs=_arr(OBJ), results=OBJ),
+                errors={"404": "Unknown experiment"})},
+    }
+
+
 # -- parallel worlds ------------------------------------------------------------------
 
 
@@ -2245,6 +2331,7 @@ TAGS = (
     "replication",
     "persona",
     "parallel-worlds",
+    "mcf",
     "games",
     "arena",
     "analysis",
@@ -2312,7 +2399,7 @@ def spec() -> dict[str, Any]:
     from gaworld.apps.community_openapi import paths as community_paths
 
     paths: dict[str, Any] = community_paths()
-    for group in (_core, _simulation, _panels, _cities, _studies, _parallel, _games, _organizations):
+    for group in (_core, _simulation, _panels, _cities, _studies, _mcf, _parallel, _games, _organizations):
         paths.update(group())
     return {
         "openapi": "3.1.0",

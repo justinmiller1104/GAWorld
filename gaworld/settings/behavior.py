@@ -255,6 +255,17 @@ def human_realism_settings() -> dict[str, Any]:
             # calls that succeed, against two that fail plus a per-activity
             # top-up call for each one later.
             "activities_per_call": 3,
+
+            # Output-token budget for the ``actions`` task itself (Phase 2.0
+            # §2D). PILOT19's live console logged ``LLM output was truncated
+            # by max_tokens=512`` exactly on this task — 3-activity chunks
+            # still overrun 512 tokens when an agent writes long actions,
+            # and every truncation surfaced as "action space generation
+            # produced nothing". Only this task gets the raised limit; every
+            # other call keeps the provider's configured budget. This
+            # changes comparability with PILOT19 (which ran at the default
+            # 512) — see docs/MCF_GAWORLD.md §2.1.5.
+            "max_tokens": 1024,
         },
         "dynamic_behavior": {
             "enabled": True,

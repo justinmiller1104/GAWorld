@@ -436,10 +436,17 @@ def _stage_adjust_activity(agent, step, sim, *, scope):
         if hook_reason:
             change_reason = hook_reason
     if changed:
+        # Transient interrupts are duration-bounded (Phase 2.0): pass the
+        # interrupt's own window so an override on a sleep slot expires and
+        # sleep re-asserts; non-sleep slots keep persistent semantics.
+        _itr_duration = None
+        if isinstance(_dyn_result, dict) and isinstance(_dyn_result.get("interrupt"), dict):
+            _itr_duration = _dyn_result["interrupt"].get("duration_minutes")
         scope.schedule_map[agent_id] = apply_schedule_override(
             scope.schedule_map[agent_id],
             scope.time_str,
             activity,
+            duration_minutes=_itr_duration,
         )
         updated = ensure_action_space_for_activity(agent, scope.actions[agent_id], activity)
         if updated and scope.stateful:

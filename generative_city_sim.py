@@ -55,6 +55,7 @@ from gaworld.goals import (
 # --------------------------------------------------------------------
 from gaworld.kernel import build_kernel
 from gaworld.kernel import remote as kernel_remote
+from gaworld.kernel.policy_events import execute_policy_events
 from gaworld.llm.providers import call_llm
 from gaworld.memory.experience import (
     load_agent_episodes,
@@ -3348,7 +3349,7 @@ def run_simulation():
             sim_ctx.clock.advance(time_str, time_index)
             kernel_remote.drain(sim_ctx)
             step_minutes = _timeline_step_minutes(timeline, time_index)
-            policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
+            policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None); execute_policy_events(sim_ctx, POLICY_EVENTS, day, time_str)  # Phase 2.3: declarative entries fire here (audited); text-only entries keep the legacy feed
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()

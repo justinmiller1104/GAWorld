@@ -514,14 +514,7 @@ class VenueCapacityPlugin(Plugin):
         cfg = (ctx.config.get("local_physical", {}) or {}).get("capacity", {}) or {}
         if not bool(cfg.get("enabled", False)):
             return
-        self._categories = tuple(cfg.get("categories") or vc_impl.DEFAULT_CATEGORIES)
-        represent = cfg.get("agents_represent")
-        if represent is None:
-            # One sampled population, one answer to "how many people is a
-            # resident": share the congestion layer's knob unless overridden.
-            represent = (ctx.config.get("traffic", {}) or {}).get("agents_represent", 1.0)
-        self._represent = max(0.0, float(represent))
-        self._top_k = max(0, int(cfg.get("redirect_top_k", 4)))
+        self._refresh_capacity_config(ctx)
         self._seed = ctx.config.get("random_seed")
         self._ledger = vc_impl.TickLedger()
         # With rooms on, a venue is full *for an activity* once every room
@@ -535,6 +528,25 @@ class VenueCapacityPlugin(Plugin):
         ctx.bus.on("on_time_tick", self._start_tick)
         ctx.bus.on("tick.agent_order", self._order)
         ctx.controller.register_validator(self._validate, priority=-10)
+
+    def _refresh_capacity_config(self, ctx):
+        """Re-read the capacity-side settings from the live config.
+
+        Node-attribute capacities are read live at every admission attempt
+        anyway; these config knobs are re-read too so a mid-run
+        ``update_config`` intervention (e.g. a crowding shock on
+        ``local_physical.capacity.agents_represent``) reaches admission
+        decisions on the next attempt, not only after a re-run.
+        """
+        cfg = (ctx.config.get("local_physical", {}) or {}).get("capacity", {}) or {}
+        self._categories = tuple(cfg.get("categories") or self._vc.DEFAULT_CATEGORIES)
+        represent = cfg.get("agents_represent")
+        if represent is None:
+            # One sampled population, one answer to "how many people is a
+            # resident": share the congestion layer's knob unless overridden.
+            represent = (ctx.config.get("traffic", {}) or {}).get("agents_represent", 1.0)
+        self._represent = max(0.0, float(represent))
+        self._top_k = max(0, int(cfg.get("redirect_top_k", 4)))
 
     def _node(self, city_map, location):
         return self._cm.node_by_name(city_map, location) if city_map and location else None
@@ -645,6 +657,7 @@ class VenueCapacityPlugin(Plugin):
     def _validate(self, request, ctx):
         if request.name != "move":
             return None
+        self._refresh_capacity_config(ctx)
         city_map = ctx.extras.get("city_map")
         node = self._node(city_map, str(request.params.get("to", "") or ""))
         if not self._vc.is_capped(node, self._categories):
@@ -657,6 +670,10 @@ class VenueCapacityPlugin(Plugin):
         if here and here["id"] == node["id"]:
             return None  # already inside, already counted
         if self._admit(node, request, agent, city_map):
+            if ctx.recorder is not None:
+                ctx.recorder.record("venue.admission", self._admission_row(
+                    request.agent_id, node, "admitted",
+                ))
             return None
         time_str = getattr(ctx.clock, "time_str", "")
         for alt_id, _distance in self._cm.nearest_by_category(
@@ -668,6 +685,9 @@ class VenueCapacityPlugin(Plugin):
             if not self._admit(alt, request, agent, city_map):
                 continue
             if ctx.recorder is not None:
+                ctx.recorder.record("venue.admission", self._admission_row(
+                    request.agent_id, alt, "redirected",
+                ))
                 ctx.recorder.record("venue.redirect", {
                     "agent_id": request.agent_id,
                     "from": node["id"],
@@ -681,7 +701,24 @@ class VenueCapacityPlugin(Plugin):
                 params={**request.params, "to": alt["id"]},
                 raw_text=request.raw_text,
             ))
+        if ctx.recorder is not None:
+            ctx.recorder.record("venue.admission", self._admission_row(
+                request.agent_id, node, "denied",
+            ))
         return Verdict.deny(self._full_reason(node, request, agent, city_map))
+
+    def _admission_row(self, agent_id, node, outcome):
+        """One venue.admission row PER REQUEST (per-attempt semantics):
+        retries after a denial are new rows; one accepted request never
+        duplicates. Occupancy is read after the admit/deny decision."""
+        return {
+            "agent_id": agent_id,
+            "to": node["id"],
+            "outcome": outcome,
+            "capacity": node.get("capacity"),
+            "occupancy": self._load(node),
+            "agents_represent": self._represent,
+        }
 
 
 class RoomsPlugin(Plugin):

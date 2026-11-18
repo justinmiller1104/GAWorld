@@ -191,6 +191,79 @@ snapshots carry the departure purpose. `classify_activity_record` promotes
 in-transit travel to commuting ONLY for work-related purposes (`paid_work`);
 unknown or non-work purposes stay `travel`.
 
+Phase 2.0 fixes (offline validation, RESULT-3488 → GREEN):
+
+- **Sleep-path fix (critical).** The Phase 1.9 widening was dead code for
+  exactly the cached schedules of record: the early return on ANY
+  sleep-tagged slot fired first, because real cached schedules already end
+  with a 23:30 睡前 tail — while the 00:00–07:50 head still fell into the
+  个人时间 fallback (0 sleep minutes end-to-end for both pilot agents). The
+  guard is now split: an explicit sleep slot (睡觉/睡眠/入睡/就寝) still
+  leaves the schedule untouched, but a bare 睡前 tail — this function's own
+  artifact from a previous day — is completed with head coverage reusing the
+  tail's own label (no invented hours).
+- **Unified travel/commuting rule.** `classify_episode` now agrees with
+  `classify_activity_record`: travel status (departed/in_transit) or the
+  writer's 乘坐…移动 phrase proves TRAVEL, never commuting; commuting
+  requires the structured `destination_purpose == "paid_work"` (nested in
+  the travel dict — the real logger's placement — or top-level). Coverage
+  never increases by relabelling; the `travel` bucket is first-class in the
+  daily-minutes accounting.
+- **destination_purpose reach fix.** `classify_activity_record` reads
+  `destination_purpose` nested inside the `travel` dict as well as
+  top-level (the dry run of record carried it nested in 124/132 episodes,
+  top-level in 0/132), so verified paid_work journeys promote to commuting
+  end-to-end.
+- **Truncation settings change (§2D, comparability note).** PILOT19's live
+  console logged `LLM output was truncated by max_tokens=512` on the
+  `actions` task (surfacing as "action space generation produced nothing").
+  A new task-specific setting `action_space.max_tokens` (default 1024)
+  raises the output budget for that task only — every other call keeps its
+  provider's configured budget. PILOT19 ran at the 512 default, so action-
+  space results are not strictly comparable across that boundary; future
+  runs record the setting.
+- **Transient interrupts are duration-bounded (§2.1.5, Phase 2.0).**
+  `apply_schedule_override` takes an optional `duration_minutes`: an
+  interrupt landing on a sleep slot expires after its own window and sleep
+  re-asserts for the rest of the night (the interrupt path passes the
+  interrupt's own duration); non-sleep slots and the legacy two-argument
+  call keep persistent semantics.
+- **Activity continuity: continue-vs-replace, interrupt cooldown,
+  commitment table correction (Phase 2.1, RESULT-3515).** The dynamic
+  engines re-fire candidates from scratch every tick, so a persistent
+  background condition (梅雨) or a climbing time_pressure displaced sleep —
+  and churned work, meals and leisure identically — on tick after tick
+  (26–27 of 42 night ticks ended in an accepted interrupt in the Phase 2.0
+  dry run). Three generic rules in `gaworld/behavior/dynamic.py` fix the
+  re-firing rate, none of them sleep-specific:
+  1. **Continue-vs-replace** — in `evaluate_step_dynamics`, a winning
+     candidate whose activity equals the currently effective activity is a
+     continue, not a change: the step reports no-change (mood and social
+     side-effects still surface) instead of rewriting the schedule and
+     re-resolving location for zero behavioural delta.
+  2. **Active-interrupt cooldown** — an accepted interrupt records a
+     `(source, kind, until)` window bounded by its own `duration_minutes`
+     in a module-level registry keyed by agent id (per-tick evaluation may
+     receive a fresh agent dict each tick). While the window is active,
+     same-`(source, kind)` candidates are suppressed unless strictly higher
+     priority — and each suppression re-arms the window, so a persistent
+     event fires once per window rather than once per tick. Lower-priority
+     churn of other kinds is also suppressed while busy; a record expires
+     naturally once now is past its window, and the Phase 2.0 override
+     expiry (§2.1.5 above) is untouched.
+  3. **Commitment classifier correction** — the bare sleep-class tokens
+     (睡觉/睡眠/入睡/就寝/睡前) join `COMMITMENT_KEYWORDS` at the 0.85 level
+     (the same table already lists 睡前准备; they previously fell through to
+     the 0.35 default, putting the night acceptance threshold at ≈0.34
+     where weather ≈0.44–0.66 cleared it every tick). With the correction
+     the threshold is ≈0.74, so only genuine urgencies (storm 0.85,
+     fire/earthquake 0.95) displace sleep — the spec's requirement that
+     categories (c) non-urgent external events and (d) urgent events be
+     separated by behaviour, not by special-casing sleep in the pipeline.
+
+  Residual D2 (the dynamic path in `_stages.py` applies its result without
+  the `_accept_activity_change` time-fit gate) remains open.
+
 ### 2.2 Valid dimensions
 
 - **Paid-work vs leisure/social time-use error** — the two-dimensional frontier
@@ -427,3 +500,163 @@ predecessor; 0.5–0.8 surviving content is restated in 0.9/1.0 above.
 *Consolidated by the Phase 1.1 cleanup task (TASK-3232) from the six phase docs,
 REPO_HYGIENE_AUDIT.md, and research RESULTs 3170/3171/3176/3187/3188/3192/3201/
 3206/3217. No code, tests, or default-run behaviour were changed by this doc.*
+
+## 8. Intervention testing framework (Phase 2.2)
+
+`benchmark/mcf/interventions.py` — declarative intervention-spec schema. A
+scenario arm is one dict: `name`; `trigger` (`day` + `time` in the policy
+matcher's `HH:MM` form); `operation` — one of the kernel's standard
+interventions (`set_agent_state` / `update_config`) or a declarative
+`policy_event` entry, with `kwargs`; `targets` (agent ids, or an env
+component for `update_config`); optional `duration`. `validate_intervention_spec`
+rejects unknown operations, missing/partial triggers, non-HH:MM times, bad
+targets and non-positive durations with errors naming the field.
+
+`apply_intervention(spec, config)` is a pure delta builder: it returns a new
+config that differs from the base in exactly the intervention's keys
+(dotted-path `update_config`, or exactly one appended `policy_event`) and never
+mutates shared state.
+
+**Scenario execution contract.** Branching a running world at time T is
+unsupported by design (checkpoints are save/restore/continue only), so arms
+run fresh-start-equivalent: identical seed, identical roster/city, identical
+fast-mode flags and forced provider — differing ONLY by the config delta the
+spec produces — each in its own `create_run`-isolated directory. Arms are
+independent; order and repetition must not matter.
+
+**Comparison report** (`benchmark/mcf/compare.py`, pure functions):
+`windows` (pre/post-intervention-day `max_abs_diff`), `per_day` (differences
+over simulation time), `variation` (per-run spread alongside the mean across
+repeated runs), `effect` (`verdict` + `beneficial` — a zero-effect delta is
+never labelled beneficial), `data_status` per arm (`ok` / `MISSING` /
+`UNRELIABLE` — absent or sub-threshold data is reported honestly, never as a
+zero effect). The `mcf_validation` section (per-arm `score_directory` results
+plus `limitations`) is kept separate from the effect section: baseline realism
+is not evidence of intervention-response accuracy; MCF validates, it never
+selects the winning intervention.
+
+### 8.1 Experiment runner & execution audit (Phase 2.3)
+
+`benchmark/mcf/experiment.py::run_experiment(base_config, intervention_spec, harness, run_root=...)`
+executes BOTH arms of a scenario end-to-end through an injected `harness(config, run_dir)`
+callable — the real vehicle being the Phase 2.1 canary `dry_run=True` pattern
+(full sim pipeline, `call_llm` stubbed, zero provider calls). The spec is
+validated *before* any run directory exists (unsupported operations raise
+`InterventionSpecError` immediately). The intervention arm's config is built by
+pure translation — `update_config` as a dotted-path delta; `set_agent_state` /
+`policy_event` as one named `policy_events` entry the sim matches per tick —
+so the arms differ only by that delta (fresh-start equivalence, §8). Each arm
+gets its own `create_run`-isolated directory with `config.json` and
+`run_manifest.json` (`outcome`: `completed` / `incomplete` / `in_progress` for
+interrupted arms).
+
+**Execution audit** (per intervention arm, read back from the run's OWN
+records — `intervention_executions.jsonl` plus per-agent state files — never
+from the spec): one record per intervention with `name`, `operation`,
+`intended_time` (the spec's trigger), `actual_time` (from the run's records;
+`null` when it never fired), `targets`, `requested` (the kwargs change, minus
+target identifiers), `applied` yes/no, `before`/`after` state, and a `status`
+of:
+
+- `applied` — the run's own records show the change took effect (execution
+  record with `applied: true`, or the run's config snapshot carries the
+  requested value);
+- `FAILED` — an execution record reports failure; the record carries the
+  `reason` verbatim (e.g. unknown target agent);
+- `NOT_APPLIED` — the trigger never fired: no execution record and no episode
+  divergence at/after the trigger. A declared intervention whose trigger never
+  fires is NEVER reported as success.
+
+Per-agent state changes are materialized under `agent_state/agent_<id>.jsonl`
+derived from the applied execution records, so target selection is auditable
+on disk: a targeted agent's before/after is recorded; untargeted agents get no
+records.
+
+**The tick-loop executor:** since Phase 2.3 the sim's tick loop fires matching
+entries through `gaworld/kernel/policy_events.py::execute_policy_events` —
+an entry carrying `operation: set_agent_state` calls the audited kernel
+intervention (`Controller.intervene("set_agent_state", ...)`) for each target,
+with the true before/after read from the agent's state dict recorded to
+`policy_events.execution`; unknown operations raise loudly, and entries
+WITHOUT an operation keep the legacy text-feed behaviour (`gaworld/policy/
+plugin.py` untouched).
+
+**Incomplete arms are honest:** a harness that crashes or returns
+`ok: false` (or raises) leaves a non-completed manifest and the arm is
+reported `complete: false`; the comparison then marks the affected arm's
+`data_status` as `MISSING` and the effect verdict as `insufficient_data` —
+insufficient data is never presented as evidence of no effect. Comparison
+itself is `compare_arms` over the arms' actual episode files (§8); identical
+inputs with the same seed produce byte-identical reports.
+
+**Phase 2.5 extension — shared-history forks, LLM replay, corrected metrics.**
+`benchmark/mcf/experiment.py::fork_arms_from_checkpoint(checkpoint_dir, arms, run_root=...)`
+gives both arms an identical pre-intervention history: each arm restores the SAME
+day-boundary checkpoint dir (`resume_from_checkpoint` in its harness-visible config)
+into its own `create_run`-isolated run dir; the checkpoint's `news_cache.json` is
+copied into both run dirs so wall-clock-fetched headlines cannot differ between arms;
+every non-`baseline` arm runs under the LLM replay wrapper
+(`benchmark/mcf/replay.py::install_llm_replay` — canary-style module-attribute rebind
+of `providers.call_llm`, restorable) until its trigger: pre-trigger calls are served
+from a cache keyed on (task, agent_id, system, temperature, prompt), a pre-stop cache
+MISS raises `ReplayCacheMiss` loudly (never a silent fall-through), and past the stop
+predicate the live provider resumes sampling. Both arms' `run_manifest.json` records
+the fork provenance: `fork.checkpoint` and `fork.replay_window`
+(`{"start": "checkpoint", "stop": trigger}`). The replay wrapper is the only way to
+hold LLM trajectories identical (checkpoint state alone still diverges at the first
+stochastic LLM call); post-trigger responses are fresh draws in both arms.
+
+`compare_arms` reports corrected, explicit-denominator statistics (Phase 2.5): each
+window carries `episode_disagreement_rate` = mismatches / |common episode keys in the
+window| — never a whole-run denominator (the Phase 2.4 discrepancy divided per-slot
+mismatches by the baseline arm's whole-run episode count, shrinking a 100% slot
+disagreement ~120×); `variable_diffs` names each state variable with its max |Δ| per
+window instead of one folded scalar; the report carries `first_divergence_tick` (the
+earliest differing agent/day/time, `null` when identical). `max_abs_diff` is retained
+in the windows as a raw diagnostic only and never appears as — or inside — the effect
+verdict, which is judged on the disagreement rate; a `MISSING` arm stays
+`insufficient_data` (insufficient data is never evidence of no effect).
+
+**Phase 2.6 extension — sequence-aware replay, all-arms protocol, venue runtime reach.**
+
+- *Sequence replay* (`benchmark/mcf/replay.py::install_sequence_replay`): the Phase 2.5 dict
+  replay lost repeated identical prompts (1,558 calls / 1,099 unique keys — two calls with the
+  same prompt but different responses cannot both be replayed). `install_sequence_replay(recorded_events,
+  base_llm=None, stop_predicate=None)` replays an ORDERED list of `{task, agent_id, system, temperature,
+  prompt, response}` events: every call gets its OWN recorded response, in order. Each incoming request
+  is validated against the event at the current position — a task/agent/system/temperature mismatch, or
+  a call whose prompt belongs to a LATER event (reordered), raises `ReplayMismatch` naming the exact
+  index (and field); extra/duplicated calls beyond the recording raise too. `replay.coverage()` reports
+  `{hits, total}` and `replay.first_mismatch` the first failure (missing calls are visible as hits <
+  total). The stop predicate LATCHES: past the boundary every call falls through live and consumes no
+  event. Without an explicit `base_llm` the fall-through goes to whatever wrapper is layered above at
+  install time (composition with the canary works; restores unwind one layer), and if nothing is layered
+  above the untouched provider the call is answered with the offline `"LIVE"` sentinel — never the
+  network by accident.
+- *Strict replay (Phase 2.7)*: the Phase 2.6 tolerance for a prompt matching NO recorded event was a
+  silent-divergence hole. Now any pre-trigger prompt that is not the current event's raises
+  `ReplayMismatch` (kind `unexpected`), a duplicated call (an already-consumed event's prompt re-issued)
+  raises (kind `duplicate`), and a window closing while recorded events were never replayed raises
+  (kind `missing`, naming the first unconsumed index) — the one kept tolerance: with an explicit live
+  `base_llm` (a partial recording over a live run) a never-recorded prompt is still shape-identified,
+  but it marks the history prompt-unverified, so no `missing` claim can follow. After the window
+  latches, a PRE-trigger event (a prompt whose sim clock line is earlier than the latch time) arriving
+  late raises kind `late` instead of silently sampling live.
+- *Sim-time stop boundary (Phase 2.7)*: `benchmark/mcf/replay.py::sim_time_stop_predicate(day, time)`
+  builds the authoritative boundary from the sim's own clock line (`第 {day} 天 ... 现在是 {time}`)
+  stamped into every perception prompt: all pre-trigger calls replay, the first call at or after the
+  trigger time goes live (neither early nor late), and the fork launcher uses it as the replay window's
+  stop when an arm carries no stop predicate of its own.
+- *All-arms replay protocol* (`fork_arms_from_checkpoint`): every arm carrying `recorded_responses` —
+  `baseline` and `neutral_control` included — replays the same recorded sequence until its own trigger,
+  not only the intervention arm; each arm's `result[arm]["replay"]["stop"]` and the arm-dir
+  `run_manifest.json` `fork.replay_window` record the window (Phase 2.7 adds `replay.kind`:
+  `sequence` for strict sequence replay, `dict` for the legacy memoizer). An arm carrying
+  `recorded_events` replays STRICTLY under `install_sequence_replay` with the sim-time stop factory
+  built from the trigger (`day`/`time`) as the boundary; an arm without recordings (the Phase 2.5
+  live-sampling baseline) still samples live.
+- *Venue-capacity runtime reach*: `VenueCapacityPlugin` (`gaworld/world/plugin.py`) re-reads the
+  capacity-side config knobs (`agents_represent`, `categories`, `redirect_top_k`) at every admission
+  attempt, so a mid-run `update_config` intervention (e.g. a crowding shock on
+  `local_physical.capacity.agents_represent`) reaches admission decisions on the NEXT attempt without a
+  re-run. Node-attribute capacities were already read live; denial/redirect records are unchanged.

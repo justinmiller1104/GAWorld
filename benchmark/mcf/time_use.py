@@ -100,29 +100,29 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 __all__ = [
     "ADMISSIBLE_STYLE_FIT",
-    "ActivityRecord",
     "CATEGORIES",
     "MIN_COMPARISON_DAYS",
     "MIN_COMPARISON_POPULATION",
     "STRESS_STYLE_FIT",
     "TARGETS_2018",
     "TARGETS_2024",
+    "ActivityRecord",
     "Episode",
     "ObservedBreakdown",
     "ScoreResult",
     "classify_activity",
     "classify_activity_record",
-    "compute_observed_minutes",
-    "coverage_breakdown",
-    "dedupe_activity_records",
     "classify_episode",
     "compute_daily_minutes",
+    "compute_observed_minutes",
     "coverage",
+    "coverage_breakdown",
+    "dedupe_activity_records",
     "load_episodes",
     "score_against_targets",
     "score_directory",
@@ -348,13 +348,20 @@ def classify_episode(ep: Episode | Mapping[str, object]) -> tuple[str | None, st
     episode = _soft_coerce(ep) if isinstance(ep, Mapping) else ep
     travel = episode.travel or {}
     status = str(travel.get("status", ""))
+    # Unified rule (Phase 2.0 §2B): travel status / the writer's travel
+    # phrase prove TRAVEL, never a work purpose. Commuting requires the
+    # structured destination_purpose (nested in the travel dict, the real
+    # logger's placement) — same rule as classify_activity_record.
     if status in _IN_TRANSIT_STATUSES:
-        return "commuting", "travel"
+        purpose = str(travel.get("destination_purpose", ""))
+        if purpose in _COMMUTING_PURPOSES and _VERIFIED_PURPOSE_RE.match(purpose):
+            return "commuting", "destination_purpose"
+        return travel_category(), "travel_status"
     category, confidence = classify_activity(episode.final_activity)
     if category is not None:
         return category, confidence
     if _TRAVEL_ACTION_RE.search(episode.action or ""):
-        return "commuting", "action_keyword"
+        return travel_category(), "action_keyword"
     category, _ = classify_activity(episode.scheduled_activity)
     if category is not None:
         return category, "scheduled_keyword"
@@ -377,12 +384,9 @@ def split_run_segments(episodes: Iterable[Episode | Mapping[str, object]]) -> li
     for raw in episodes:
         ep = _soft_coerce(raw)
         minute = _parse_clock(ep.time)
-        reset = (
-            current
-            and (
-                ep.day < prev_day  # type: ignore[operator]
-                or (ep.day == prev_day and prev_minute - minute > 60)  # type: ignore[operator]
-            )
+        reset = current and (
+            ep.day < prev_day  # type: ignore[operator]
+            or (ep.day == prev_day and prev_minute - minute > 60)  # type: ignore[operator]
         )
         if reset:
             segments.append(current)
@@ -400,10 +404,42 @@ def _parse_clock(time: str) -> int:
     return int(hours) * 60 + int(minutes)
 
 
-def load_episodes(path: str | Path) -> list[Episode]:
-    """Load an agent's episode JSONL; agent_id falls back to the filename."""
+def _row_agent_id(path: str | Path, row: Mapping[str, object]) -> int | None:
+    """Resolve a record's agent id; None when it cannot be attributed.
+
+    The filename ``agent_<N>.jsonl`` names the agent; otherwise the row must
+    carry a real (non-null) ``agent_id``. Records without either are not
+    episodes and must never be bucketed as a phantom agent 0.
+    """
     agent_match = _AGENT_ID_RE.search(Path(path).name)
-    fallback_id = int(agent_match.group(1)) if agent_match else 0
+    if agent_match:
+        return int(agent_match.group(1))
+    agent_id = row.get("agent_id")
+    if agent_id is None or (isinstance(agent_id, str) and not agent_id.strip()):
+        return None
+    return int(agent_id)
+
+
+def count_unattributed(path: str | Path) -> int:
+    """Count JSONL records that cannot be attributed to an agent."""
+    unattributed = 0
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            if _row_agent_id(path, json.loads(line)) is None:
+                unattributed += 1
+    return unattributed
+
+
+def load_episodes(path: str | Path) -> list[Episode]:
+    """Load an agent's episode JSONL; agent_id falls back to the filename.
+
+    Records that cannot be attributed to an agent (no ``agent_<N>`` filename
+    match and no real ``agent_id`` in the row) are skipped — never bucketed
+    as a fake agent; ``score_directory`` reports them via warnings.
+    """
     episodes: list[Episode] = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -411,7 +447,9 @@ def load_episodes(path: str | Path) -> list[Episode]:
             if not line:
                 continue
             row = json.loads(line)
-            agent_id = row.get("agent_id", fallback_id)
+            agent_id = _row_agent_id(path, row)
+            if agent_id is None:
+                continue
             episodes.append(
                 Episode(
                     agent_id=int(agent_id),
@@ -448,6 +486,7 @@ def _coerce_episode(ep: Episode | Mapping[str, object]) -> Episode:
 def _empty_minutes() -> dict[str, int]:
     minutes = dict.fromkeys(CATEGORIES, 0)
     minutes[UNKNOWN] = 0
+    minutes[travel_category()] = 0
     return minutes
 
 
@@ -535,7 +574,11 @@ def compute_daily_minutes(
                     # Repaired ordering: the sorted record is trusted, gaps
                     # belong to the previous category.
                     minutes[bucket] += gap
-                elif next_category == category or gap <= 2 * tick_minutes or next_category in _BOUNDARY_ANCHORED:
+                elif (
+                    next_category == category
+                    or gap <= 2 * tick_minutes
+                    or next_category in _BOUNDARY_ANCHORED
+                ):
                     minutes[bucket] += gap
                 else:
                     # Tick-mismatch guard: a large gap that isn't a multiple
@@ -635,9 +678,7 @@ def score_against_targets(
     employed = set(employed_agents or ())
     normalized = _normalize_daily(daily)
     agent_days: list[tuple[int, int, Mapping[str, float]]] = [
-        (agent_id, day, minutes)
-        for agent_id, days in normalized.items()
-        for day, minutes in days.items()
+        (agent_id, day, minutes) for agent_id, days in normalized.items() for day, minutes in days.items()
     ]
 
     def mean_over(pairs: list[float]) -> float:
@@ -690,8 +731,9 @@ def score_against_targets(
             coverage=0.0,
             leftover_minutes=0.0,
             per_agent_day={},
-            uncertainty_warnings=["no agent-days scored: an empty comparison cannot be "
-                                  "read as a zero-error fit"],
+            uncertainty_warnings=[
+                "no agent-days scored: an empty comparison cannot be read as a zero-error fit"
+            ],
             frontier_valid=False,
         )
 
@@ -725,9 +767,7 @@ def score_against_targets(
     if cov < 0.85:
         warnings.append(f"low coverage: only {cov:.2f} of inferred minutes are classified (< 0.85)")
 
-    overall_error = mean_over(
-        [spec["error"] for spec in per_category.values() if spec["error"] is not None]
-    )
+    overall_error = mean_over([spec["error"] for spec in per_category.values() if spec["error"] is not None])
     leftover = mean_over([float(minutes.get(UNKNOWN, 0)) for _, _, minutes in agent_days])
     if per_category["paid_work"]["n_agent_days"] == 0:
         warnings.append(
@@ -750,13 +790,31 @@ def score_directory(
     employed_agent_ids: Iterable[int],
     tick_minutes: int = 10,
 ) -> ScoreResult:
-    """Score every ``*.jsonl`` episode file under ``directory``."""
+    """Score the per-agent episode files (``agent_<id>.jsonl``) under ``directory``.
+
+    Only episode files are scored — audit tables such as
+    ``intervention_executions.jsonl`` are not episodes. Records that cannot
+    be attributed to an agent are reported as an unattributed count in
+    ``uncertainty_warnings``, never bucketed as a phantom agent 0.
+    """
     daily: dict[int, dict[int, dict[str, int]]] = {}
+    unattributed = 0
     for path in sorted(Path(directory).glob("*.jsonl")):
+        unattributed += count_unattributed(path)
+        if not _AGENT_ID_RE.search(path.name):
+            continue  # audit tables are not episodes; their unattributed rows are counted above
         agent_daily = compute_daily_minutes(load_episodes(path), tick_minutes)
         for agent_id, days in agent_daily.items():
             daily.setdefault(agent_id, {}).update(days)
-    return score_against_targets(daily, employed_agents=employed_agent_ids)
+    result = score_against_targets(daily, employed_agents=employed_agent_ids)
+    if unattributed:
+        warnings = list(result.uncertainty_warnings or [])
+        warnings.append(
+            f"{unattributed} unattributed record(s) dropped: rows without a real agent "
+            "identifier cannot be scored"
+        )
+        result = replace(result, uncertainty_warnings=warnings)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -784,11 +842,11 @@ class ObservedBreakdown:
     """
 
     __slots__ = (
-        "observed_minutes",
         "classified_minutes",
+        "minutes",
+        "observed_minutes",
         "unknown_minutes",
         "unobserved_minutes",
-        "minutes",
     )
 
     _FIELDS = (
@@ -1002,7 +1060,9 @@ def dedupe_activity_records(records: Iterable[ActivityRecord]) -> list[ActivityR
     same-category spans that overlap or touch are unioned, so overlapping
     evidence is never double-counted regardless of input order.
     """
-    ordered = sorted(records, key=lambda r: (r.start_min, r.end_min, r.category, r.agent_id, r.evidence_source))
+    ordered = sorted(
+        records, key=lambda r: (r.start_min, r.end_min, r.category, r.agent_id, r.evidence_source)
+    )
     merged: list[ActivityRecord] = []
     for record in ordered:
         if merged:
@@ -1058,7 +1118,10 @@ def classify_activity_record(record: Mapping[str, object]) -> tuple[str, str]:
         return str(structured), "structured"
     travel = record.get("travel")
     if isinstance(travel, Mapping) and str(travel.get("status", "")) in _IN_TRANSIT_STATUSES:
-        purpose = str(record.get("destination_purpose", ""))
+        # The real episode logger nests destination_purpose INSIDE the
+        # travel dict (0/132 top-level in the Phase 2.0 dry run of
+        # record) — read both placements (Phase 2.0 §2C).
+        purpose = str(travel.get("destination_purpose") or record.get("destination_purpose") or "")
         if purpose in _COMMUTING_PURPOSES and _VERIFIED_PURPOSE_RE.match(purpose):
             return "commuting", "destination_purpose"
         return travel_category(), "travel_status"

@@ -23,6 +23,7 @@ import pytest
 from benchmark.mcf.time_use import (
     classify_activity,
     classify_episode,
+    travel_category,
     compute_daily_minutes,
     coverage,
     load_episodes,
@@ -120,16 +121,20 @@ def _fixture_c() -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def test_fixture_a_departed_travel_is_commuting():
+def test_fixture_a_departed_travel_is_travel():
+    # Phase 2.0 §2B repin: departed status alone is purpose-unknown travel,
+    # never commuting (supersedes the pre-reconciliation contract).
     category, confidence = classify_episode(_fixture_a())
-    assert category == "commuting"
-    assert confidence == "travel"
+    assert category == travel_category()
+    assert confidence == "travel_status"
 
 
-def test_fixture_c_in_transit_travel_is_commuting():
+def test_fixture_c_in_transit_travel_is_travel():
+    # Phase 2.0 §2B repin: in-transit status without a verified work purpose
+    # is plain travel (supersedes the pre-reconciliation contract).
     category, confidence = classify_episode(_fixture_c())
-    assert category == "commuting"
-    assert confidence == "travel"
+    assert category == travel_category()
+    assert confidence == "travel_status"
 
 
 def test_fixture_b_stationary_todo_stays_unknown():
@@ -168,10 +173,12 @@ def test_arrived_tick_with_classifiable_scheduled_activity_uses_it_as_weak_evide
 
 def test_action_travel_phrase_covers_missing_travel_block():
     # Same 「前往X」 snapshot without the travel dict: the writer's own
-    # 乘坐…移动 action phrase still evidences commuting.
+    # 乘坐…移动 action phrase evidences travel — Phase 2.0 §2B repin, it
+    # proves travel, never a work purpose (supersedes the pre-
+    # reconciliation contract that promoted it to commuting).
     ep = {k: v for k, v in _fixture_a().items() if k != "travel"}
     category, confidence = classify_episode(ep)
-    assert category == "commuting"
+    assert category == travel_category()
     assert confidence == "action_keyword"
 
 
@@ -204,7 +211,9 @@ def test_no_sleep_is_ever_invented():
 
 def test_travel_ticks_attribute_commuting_minutes_not_the_stale_label():
     # 00:00 departed (fixture A) -> 00:20 in transit -> 00:30 arrived.
-    # In-transit ticks are commuting; the arrived tick's dwell is unknown.
+    # In-transit ticks are plain travel (Phase 2.0 §2B repin —
+    # purpose-unknown travel is never commuting); the arrived tick's
+    # dwell is unknown.
     eps = [
         _fixture_a(),
         _fixture_a() | {"time": "00:20", "travel": dict(_fixture_a()["travel"], status="in_transit", progress=0.54)},  # type: ignore[arg-type]
@@ -214,8 +223,9 @@ def test_travel_ticks_attribute_commuting_minutes_not_the_stale_label():
     minutes = compute_daily_minutes(eps, tick_minutes=10)[0][1]
     # 00:00->00:20 same category: gap kept (20); 00:20->00:30 within 2*tick
     # (10); the arrived/stationary dwell from 00:30 on is unlogged unknown.
-    assert minutes["commuting"] == 30
+    assert minutes["travel"] == 30
     assert minutes["unknown"] == 1410  # dwell 00:30->00:50 + tail to 24:00
+    assert minutes["commuting"] == 0
     assert sum(minutes.values()) == 1440
 
 
@@ -229,7 +239,9 @@ def test_large_gap_is_still_split_not_stretched_by_structured_fields():
         _fixture_b() | {"time": "01:00"},
     ]
     minutes = compute_daily_minutes(eps, tick_minutes=10)[0][1]
-    assert minutes["commuting"] == 20
+    # Phase 2.0 §2B repin: the departed tick is purpose-unknown travel, so
+    # the ≤2*tick gap carry lands in travel, not commuting.
+    assert minutes["travel"] == 20
     assert minutes["unknown"] == 40 + 1440 - 60  # gap remainder + unobserved tail
 
 
@@ -257,7 +269,7 @@ def test_midnight_boundary_day_split_with_structured_fields():
     # Day 1 ends early (00:10) on a non-sleep category: per the locked
     # early-stop rule the recorded activity persists to 24:00 — this is
     # exactly the stale-label persistence artifact on sparse logs.
-    assert result[0][1]["commuting"] == 1440
+    assert result[0][1]["travel"] == 1440  # Phase 2.0 §2B repin: travel, not commuting
     # Day 2: the head 00:00->07:30 carries into sleep (previous day recorded),
     # the 07:30 breakfast tick persists to 24:00 (early-stop rule again).
     assert result[0][2]["sleep"] == 450
@@ -304,7 +316,7 @@ def test_head_of_first_day_is_unknown_without_sleep_evidence():
     minutes = compute_daily_minutes(eps, tick_minutes=10)[0][1]
     assert minutes["sleep"] == 0
     assert minutes["unknown"] == 360
-    assert minutes["commuting"] == 1440 - 360
+    assert minutes["travel"] == 1440 - 360  # Phase 2.0 §2B repin: travel, not commuting
 
 
 # ---------------------------------------------------------------------------
@@ -313,14 +325,16 @@ def test_head_of_first_day_is_unknown_without_sleep_evidence():
 
 
 def test_duplicate_tick_does_not_double_count_minutes():
-    # Two records at the same tick (fixture D content, both commuting here):
+    # Two records at the same tick (fixture D content, both travel here):
     # differencing must not produce negative or double-counted minutes. The
     # single 00:00 stamp persists to 24:00 under the locked early-stop rule
-    # (commuting 1440), and duplicates must not push it past that.
+    # (travel 1440 — Phase 2.0 §2B repin: purpose-unknown travel, not
+    # commuting), and duplicates must not push it past that.
     dup_a = _fixture_a()
     dup_b = _fixture_c()  # same tick 00:00, different destination
     minutes = compute_daily_minutes([dup_a, dup_b], tick_minutes=10)[0][1]
-    assert minutes["commuting"] == 1440
+    assert minutes["travel"] == 1440
+    assert minutes["commuting"] == 0
     assert sum(minutes.values()) == 1440
     # Deterministic across calls.
     assert compute_daily_minutes([dup_a, dup_b], tick_minutes=10) == compute_daily_minutes(
@@ -387,8 +401,10 @@ def test_segments_are_scored_separately_never_merged():
         for days in result.values():
             for minutes in days.values():
                 assert sum(minutes.values()) == 1440
-    # Segments keep different content: segment 0 is all commuting ticks.
-    assert per_segment[0][0][1]["commuting"] > 0
+    # Segments keep different content: segment 0 is all travel ticks
+    # (Phase 2.0 §2B repin: purpose-unknown travel, not commuting).
+    assert per_segment[0][0][1]["travel"] > 0
+    assert per_segment[0][0][1]["commuting"] == 0
     assert per_segment[1][0][1]["commuting"] == 0
 
 

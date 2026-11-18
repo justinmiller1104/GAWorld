@@ -97,7 +97,8 @@ def _contains_any(text: str, keywords: list) -> bool:
 # How hard it is to interrupt an activity (0 = trivial, 1 = immovable).
 COMMITMENT_KEYWORDS: List[Tuple[float, List[str]]] = [
     (0.95, ["考试", "面试", "手术", "急救", "值班", "开庭"]),
-    (0.85, ["开会", "会议", "上课", "教学", "培训", "演出", "比赛"]),
+    (0.85, ["开会", "会议", "上课", "教学", "培训", "演出", "比赛",
+            "睡觉", "睡眠", "入睡", "就寝", "睡前"]),
     (0.70, ["工作", "上班", "加班", "实验", "写代码", "值日"]),
     (0.55, ["做饭", "接孩子", "送孩子", "看病", "取快递"]),
     (0.40, ["通勤", "午饭", "晚饭", "吃饭", "购物", "买菜"]),
@@ -1130,6 +1131,58 @@ def insert_activity_into_schedule(
 # 6.  Main Entry Point — evaluate_step_dynamics
 # =========================================================================
 
+# Active-interrupt cooldown registry, keyed by agent id. Lives at module
+# level because per-tick evaluation may receive a fresh agent dict each tick
+# while the cooldown must still bridge ticks; records expire naturally with
+# the interrupt's own duration window.
+_ACTIVE_INTERRUPTS: Dict[Any, Dict[str, Dict[str, Any]]] = {}
+
+
+def _apply_interrupt_cooldown(
+    agent: Dict,
+    time_str: str,
+    candidates: List[InterruptCandidate],
+) -> List[InterruptCandidate]:
+    """Suppress repeat candidates while an accepted interrupt is still inside
+    its own duration window; only a strictly higher-priority candidate may
+    preempt. A persistent background event (梅雨, time_pressure) re-fires
+    every tick; each suppression refreshes that record's window so the event
+    is acted on once per window, not once per tick. While a window is active,
+    lower-priority churn of any other kind is suppressed too (the agent is
+    busy with the interrupt), but such suppression does not extend any
+    record. Expiry is natural: a record is dropped once now is past its
+    window.
+    """
+    now = _time_to_minutes(time_str)
+    if now is None:
+        return candidates
+    agent_key = agent.get("agent_id") if isinstance(agent, dict) else None
+    if agent_key is None:
+        return candidates
+    records = _ACTIVE_INTERRUPTS.get(agent_key)
+    if not records:
+        return candidates
+    for key in list(records):
+        if now > records[key]["until"]:
+            del records[key]
+    if not records:
+        _ACTIVE_INTERRUPTS.pop(agent_key, None)
+        return candidates
+    bar = max(r["priority"] for r in records.values())
+    kept: List[InterruptCandidate] = []
+    for c in candidates:
+        record = records.get(f"{c.source}:{c.kind}")
+        if record is not None and c.priority <= record["priority"]:
+            # Same (source, kind) churn: re-arm the window so a persistent
+            # event fires once per window rather than once per tick.
+            record["until"] = now + record["duration"]
+            continue
+        if c.priority <= bar:
+            continue
+        kept.append(c)
+    return kept
+
+
 def evaluate_step_dynamics(
     agent: Dict,
     time_str: str,
@@ -1179,6 +1232,10 @@ def evaluate_step_dynamics(
         agent, env_events,
         current_location=agent.get("locations", {}).get("current", ""),
     )
+    # Cool down before cascade generation: cascade chains derive from the
+    # same event as their primary candidate, so a suppressed event must not
+    # re-enter through its cascades either.
+    env_candidates = _apply_interrupt_cooldown(agent, time_str, env_candidates)
     candidates.extend(env_candidates)
 
     # --- 1b. Event cascades from primary env interrupts ---
@@ -1220,6 +1277,10 @@ def evaluate_step_dynamics(
     if spontaneous:
         candidates.append(spontaneous)
 
+    # --- 5b. Cooldown: suppress repeat (source, kind) candidates while an
+    #     accepted interrupt is still inside its own duration window ---
+    candidates = _apply_interrupt_cooldown(agent, time_str, candidates)
+
     # --- 6. Evaluate ---
     winner = evaluate_interrupts(candidates, scheduled_activity, agent)
 
@@ -1242,6 +1303,37 @@ def evaluate_step_dynamics(
             "schedule_insert": None,
             "all_candidates": len(candidates),
             "cascade_events": cascade_events,
+        }
+
+    # Continue-vs-replace: a winner whose activity equals the currently
+    # effective activity is a continue, not a change — re-inserting it would
+    # rewrite the schedule and re-resolve location for no behavioural delta.
+    # Mood / social side-effects are still reported.
+    if winner.activity == scheduled_activity:
+        mood_delta = winner.mood_delta
+        for ce in cascade_events:
+            mood_delta += ce.get("mood_delta", 0.0)
+        return {
+            "activity": scheduled_activity,
+            "changed": False,
+            "reason": "",
+            "interrupt": None,
+            "social_encounters": social_encounters,
+            "mood_delta": mood_delta,
+            "schedule_insert": None,
+            "all_candidates": len(candidates),
+            "cascade_events": cascade_events,
+        }
+
+    now_min = _time_to_minutes(time_str)
+    agent_key = agent.get("agent_id") if isinstance(agent, dict) else None
+    if now_min is not None and agent_key is not None:
+        _ACTIVE_INTERRUPTS.setdefault(agent_key, {})[f"{winner.source}:{winner.kind}"] = {
+            "source": winner.source,
+            "kind": winner.kind,
+            "priority": winner.priority,
+            "duration": winner.duration_minutes,
+            "until": now_min + winner.duration_minutes,
         }
 
     # Cumulative mood delta: winner's direct effect + any cascade mood

@@ -303,6 +303,21 @@ def _llm_generate_actions(
     return merged
 
 
+def _action_space_max_tokens() -> int | None:
+    """Output-token budget for the ``actions`` task (Phase 2.0 §2D).
+
+    PILOT19 truncated exactly this task at the provider default 512
+    ("action space generation produced nothing" in the live console).
+    Task-specific raise only — every other call keeps its own budget.
+    Non-positive / unparseable values fall back to the provider default.
+    """
+    try:
+        raw = int((CONFIG.get("action_space", {}) or {}).get("max_tokens", 1024))
+    except (TypeError, ValueError):
+        return None
+    return raw if raw > 0 else None
+
+
 def _llm_generate_actions_batch(
     agent: dict[str, Any], activities: list[str],
     seed_actions: dict[str, list[str]] | None = None,
@@ -335,7 +350,9 @@ def _llm_generate_actions_batch(
 4) 仅输出 JSON 对象，键为活动名，值为动作列表，不要输出其他文字。
 {seed_text}
 """
-    response = _llm_providers.call_llm(prompt, task="actions", agent_id=agent["id"])
+    response = _llm_providers.call_llm(
+        prompt, task="actions", agent_id=agent["id"], max_tokens=_action_space_max_tokens()
+    )
     action_space = _parse_action_space(response, activities)
     missing = [a for a in activities if a not in action_space]
     if missing:
@@ -346,7 +363,9 @@ def _llm_generate_actions_batch(
 活动列表：{", ".join(missing)}
 每个活动 5-10 个动作，中文短语。
 """
-        retry_response = _llm_providers.call_llm(retry_prompt, task="actions", agent_id=agent["id"])
+        retry_response = _llm_providers.call_llm(
+            retry_prompt, task="actions", agent_id=agent["id"], max_tokens=_action_space_max_tokens()
+        )
         retry_actions = _parse_action_space(retry_response, missing)
         for activity, acts in retry_actions.items():
             action_space[activity] = acts

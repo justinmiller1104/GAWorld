@@ -309,29 +309,52 @@ def is_sleep_activity(activity: str) -> bool:
 def ensure_sleep_in_schedule(
     agent: dict[str, Any], schedule: list[tuple[str, str]]
 ) -> list[tuple[str, str]]:
-    if any(is_sleep_activity(activity) for _, activity in schedule):
+    # An explicit sleep slot (睡觉/睡眠/入睡/就寝) is deliberate planning —
+    # leave the schedule alone. A bare 睡前 tail, however, is this function's
+    # own artifact from a previous day (cached schedules carry it); it only
+    # says sleep *starts* late and implies sleep across midnight, so the
+    # head of day must actually be covered (Phase 2.0: the early return on
+    # any sleep tag made the guards below dead code for exactly those
+    # cached schedules — 0 sleep minutes end-to-end).
+    if any(is_sleep_activity(activity) and "睡前" not in activity for _, activity in schedule):
         return schedule
-    # Widen the guard (Phase 1.9): a NON-sleep 00:00 head slot (e.g. 个人时间)
-    # used to defeat the Phase 1.8 fix — it only appended a 00:00 slot when
-    # missing, so PILOT19 agents with an existing non-sleep head slot got 0
-    # sleep minutes. Convert the head slot in place and drop the unscheduled
-    # night slots before the first morning slot (>= 07:00); all kept times
-    # already exist in the schedule, nothing is invented.
+    first_morning_index = next(
+        (
+            i
+            for i, (t, _) in enumerate(schedule)
+            if (_time_str_to_minutes(t) or 0) >= 7 * 60
+        ),
+        None,
+    )
+    # Phase 1.9: a NON-sleep 00:00 head slot (e.g. 个人时间) used to defeat
+    # the Phase 1.8 fix — convert the head slot in place and drop the
+    # unscheduled night slots before the first morning slot (>= 07:00); all
+    # kept times already exist in the schedule, nothing is invented.
     head_index = next((i for i, (t, _) in enumerate(schedule) if t == "00:00"), None)
     if head_index is not None and not is_sleep_activity(schedule[head_index][1]):
         schedule = list(schedule)
         schedule[head_index] = ("00:00", "睡觉")
-        first_morning_index = next(
-            (
-                i
-                for i, (t, _) in enumerate(schedule)
-                if (_time_str_to_minutes(t) or 0) >= 7 * 60
-            ),
-            None,
-        )
         if first_morning_index is not None:
             schedule = [
                 slot for i, slot in enumerate(schedule) if i <= head_index or i >= first_morning_index
+            ]
+        schedule.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
+        return schedule
+    if head_index is not None and is_sleep_activity(schedule[head_index][1]):
+        return schedule
+    # Phase 2.0: sleep evidence is only a late 睡前 tail and there is no
+    # 00:00 head slot — complete the tail with head coverage, reusing the
+    # tail's own label (nothing invented).
+    tail_label = next((a for _, a in schedule if is_sleep_activity(a)), None)
+    if tail_label is not None:
+        schedule = list(schedule) + [("00:00", tail_label)]
+        if first_morning_index is not None:
+            schedule = [
+                slot
+                for slot in schedule
+                if slot[0] == "00:00"
+                or is_sleep_activity(slot[1])
+                or (_time_str_to_minutes(slot[0]) or 0) >= 7 * 60
             ]
         schedule.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
         return schedule
@@ -926,14 +949,40 @@ def normalize_flexible_schedule(
 # Where an agent's day stands at a given time (moved from generative_city_sim).
 
 
+def _schedule_pairs(schedule):
+    """Normalize schedule entries to (time, activity) tuples.
+
+    The pipeline's real schedules (scope.schedule_map) carry dict entries
+    ("time"/"activity", see _stages.py:419/509); iterating a list of dicts
+    unpacks each entry's KEYS as (t, a), so sleep detection and expiry
+    silently never fire (RESULT-3502). Tuple lists stay the legacy form.
+    """
+    pairs = []
+    for entry in schedule or []:
+        if isinstance(entry, dict):
+            pairs.append((entry.get("time", ""), entry.get("activity", "")))
+        else:
+            t, a = entry
+            pairs.append((t, a))
+    return pairs
+
+
+def _schedule_like(schedule, pairs):
+    """Re-dict-ify ``pairs`` when the input schedule was dict-format."""
+    if schedule and all(isinstance(e, dict) for e in schedule):
+        return [{"time": t, "activity": a} for t, a in pairs]
+    return pairs
+
+
 def get_activity_for_time(schedule, time_str):
     if not schedule:
         return "个人时间"
+    pairs = _schedule_pairs(schedule)
     current_minutes = _time_str_to_minutes(time_str)
     if current_minutes is None:
-        return schedule[-1][1]
+        return pairs[-1][1]
     last_activity = None
-    for t, activity in schedule:
+    for t, activity in pairs:
         t_minutes = _time_str_to_minutes(t)
         if t_minutes is None:
             continue
@@ -944,13 +993,46 @@ def get_activity_for_time(schedule, time_str):
     return last_activity or "个人时间"
 
 
-def apply_schedule_override(schedule, time_str, activity):
+def apply_schedule_override(schedule, time_str, activity, duration_minutes: int | None = None):
     if not schedule:
         return [(time_str, activity)]
-    updated = [(t, a) for t, a in schedule if t != time_str]
+    current = get_activity_for_time(schedule, time_str)
+    pairs = _schedule_pairs(schedule)
+    updated = [(t, a) for t, a in pairs if t != time_str]
     updated.append((time_str, activity))
+    # A transient interrupt on a sleep slot must not own the rest of the night:
+    # re-assert the original sleep at the override's expiry (duration-bounded).
+    # Non-sleep slots (or the legacy no-duration form) keep persistent semantics.
+    expiry_str = None
+    if duration_minutes is not None and duration_minutes > 0:
+        start = _time_str_to_minutes(time_str)
+        if start is not None and is_sleep_activity(current):
+            # Sleep slot: the interrupt's own window bounds it — sleep re-asserts
+            # at time_str + duration.
+            expiry = (start + int(duration_minutes)) % (24 * 60)
+            expiry_str = f"{expiry // 60:02d}:{expiry % 60:02d}"
+        elif start is not None:
+            # Non-sleep slot: an override that lands on a slot's boundary replaces
+            # it persistently (legacy semantics); one that lands *inside* a slot
+            # is a bounded interrupt of that slot, and the interrupted activity
+            # resumes on the slot's own clock (slot start + duration) — not as a
+            # new persistent slot at the interrupt's timestamp.
+            slot_start = max(
+                (
+                    m
+                    for t, _ in pairs
+                    if (m := _time_str_to_minutes(t)) is not None and m <= start
+                ),
+                default=None,
+            )
+            if slot_start is not None and slot_start < start:
+                expiry = (slot_start + int(duration_minutes)) % (24 * 60)
+                expiry_str = f"{expiry // 60:02d}:{expiry % 60:02d}"
+    if expiry_str is not None:
+        updated = [(t, a) for t, a in updated if t != expiry_str]
+        updated.append((expiry_str, current))
     updated.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
-    return updated
+    return _schedule_like(schedule, updated)
 
 
 def build_schedule_map(schedules):

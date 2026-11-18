@@ -296,6 +296,8 @@ class OllamaProvider:
                     stream=True,
                 ) as r:
                     r.raise_for_status()
+                    # requests falls back to ISO-8859-1 when the server omits a charset; Ollama streams UTF-8.
+                    r.encoding = "utf-8"
                     parts: list[str] = []
                     for line in r.iter_lines(decode_unicode=True):
                         if not line:
@@ -436,6 +438,8 @@ class OpenAIProvider(_CredentialProvider):
                 allow_redirects=False,
             ) as r:
                 r.raise_for_status()
+                # requests falls back to ISO-8859-1 when the server omits a charset; the wire is UTF-8.
+                r.encoding = "utf-8"
                 parts: list[str] = []
                 for raw_line in r.iter_lines(decode_unicode=True):
                     if not raw_line:

@@ -29,41 +29,67 @@ __all__ = [
     "tuning_limit",
     "noise_domination",
     "render_report",
+    "register_axis",
+    "axes_from_names",
+    "paired_arch_stats",
+    "flat_dimensions",
+    "bound_pressing",
 ]
+
+# Axes registry (plan step 9): objective name → extractor over the
+# ``per_category`` dict of a ScoreResult. The time-use 2-D default is kept;
+# ≥3-objective studies register or pass their own axes explicitly.
+AXES: dict[str, object] = {
+    "paid_work_error": lambda pc: float(pc["paid_work"]["error"]),
+    "leisure_social_error": lambda pc: (
+        float(pc["leisure"]["error"]) + float(pc["socializing"]["error"])
+    ) / 2.0,
+}
+_DEFAULT_AXES = tuple(AXES)
+
+
+def register_axis(name: str, extractor) -> None:
+    """Add an objective to the global registry (last-writer-wins)."""
+    AXES[name] = extractor
+
+
+def axes_from_names(names) -> dict:
+    """Ordered axis mapping for the named objectives; unknown names raise."""
+    unknown = [n for n in names if n not in AXES]
+    if unknown:
+        raise KeyError(f"unregistered frontier axes: {unknown}")
+    return {n: AXES[n] for n in names}
 
 _DIMENSIONS = ("paid_work_error", "leisure_social_error")
 
 
 def assemble_error_vector(
-    score_result: ScoreResult, *, config: str, seed: int, fixture: bool
+    score_result: ScoreResult, *, config: str, seed: int, fixture: bool, axes: dict | None = None
 ) -> dict:
-    """Extract the two validated frontier dimensions from one ScoreResult.
+    """Extract the frontier dimensions from one ScoreResult.
 
-    ``leisure_social_error`` is the mean of the leisure and socializing
-    category errors. A gate-failed leg (``frontier_valid=False``) is excluded
-    with an explicit reason; a missing dimension raises.
+    ``axes`` maps objective name → extractor over ``per_category``; it
+    defaults to the registered time-use 2-D axes. A gate-failed leg
+    (``frontier_valid=False``) is excluded with an explicit reason; a missing
+    dimension raises.
     """
+    axes = axes if axes is not None else {n: AXES[n] for n in _DEFAULT_AXES}
     per_category = score_result.per_category
-    paid_work = per_category.get("paid_work")
-    leisure = per_category.get("leisure")
-    socializing = per_category.get("socializing")
-    if paid_work is None or leisure is None or socializing is None:
-        missing = [
-            name
-            for name, spec in (
-                ("paid_work", paid_work),
-                ("leisure", leisure),
-                ("socializing", socializing),
-            )
-            if spec is None
-        ]
+
+    values = {}
+    missing = []
+    for name, extractor in axes.items():
+        try:
+            values[name] = float(extractor(per_category))
+        except (KeyError, TypeError):
+            missing.append(name)
+    if missing:
         raise KeyError(f"missing frontier dimensions for {config}/seed {seed}: {missing}")
 
     vector = {
         "config": config,
         "seed": seed,
-        "paid_work_error": float(paid_work["error"]),
-        "leisure_social_error": (float(leisure["error"]) + float(socializing["error"])) / 2.0,
+        **values,
         "frontier_valid": bool(score_result.frontier_valid),
         "fixture": bool(fixture),
     }
@@ -78,36 +104,42 @@ def assemble_error_vector(
     return vector
 
 
+def _axis_names(vectors: dict) -> list[str]:
+    """Axis keys (= ``*_error`` values) present in the vectors, registry order first."""
+    sample = next(iter(vectors.values()), {})
+    registry_order = [n for n in AXES if n in sample]
+    extra = sorted(k for k in sample if k.endswith("_error") and k not in registry_order)
+    return registry_order + extra
+
+
 def average_across_seeds(
-    config: str, per_seed_vectors: dict, expected_seeds: list | None = None
+    config: str, per_seed_vectors: dict, expected_seeds: list | None = None, axes: list | None = None
 ) -> dict:
     """Mean vector (+ half-range spread) over matched seeds for one config.
 
     A seed named in ``expected_seeds`` but absent makes the config incomplete —
-    reported loudly, never silently treated as a full set.
+    reported loudly, never silently treated as a full set. ``axes`` selects the
+    objective keys to aggregate; it defaults to whatever ``*_error`` keys the
+    vectors carry (registry order first), so k-dimensional vectors work.
     """
     seeds = sorted(per_seed_vectors)
     missing = sorted(s for s in (expected_seeds or []) if s not in per_seed_vectors)
     complete = not missing
+    names = axes if axes is not None else _axis_names(per_seed_vectors)
 
-    def mean(axis: str) -> float:
-        values = [float(v[axis]) for v in per_seed_vectors.values()]
-        return sum(values) / len(values) if values else float("nan")
-
-    def spread(axis: str) -> float:
-        values = [float(v[axis]) for v in per_seed_vectors.values()]
-        return (max(values) - min(values)) / 2.0 if len(values) > 1 else 0.0
-
-    out = {
-        "config": config,
-        "paid_work_error": mean("paid_work_error"),
-        "leisure_social_error": mean("leisure_social_error"),
-        "paid_work_spread": spread("paid_work_error"),
-        "leisure_social_spread": spread("leisure_social_error"),
-        "seeds": seeds,
-        "complete": complete,
-        "missing_seeds": missing,
-    }
+    out = {"config": config}
+    for axis in names:
+        values = [float(v[axis]) for v in per_seed_vectors.values() if axis in v]
+        out[axis] = sum(values) / len(values) if values else float("nan")
+        spread_key = axis.replace("_error", "") + "_spread"
+        out[spread_key] = (max(values) - min(values)) / 2.0 if len(values) > 1 else 0.0
+    out.update(
+        {
+            "seeds": seeds,
+            "complete": complete,
+            "missing_seeds": missing,
+        }
+    )
     if not complete:
         out["reason"] = f"{config} is incomplete: missing seeds {missing}"
         out["warning"] = out["reason"]
@@ -151,6 +183,76 @@ def arch_compare(frontier_m1, frontier_m0) -> list:
         if tuple(p) not in m0 and not any(_weakly_dominates(q, tuple(p)) for q in m0)
     ]
     return sorted(gain)
+
+
+def paired_arch_stats(
+    arch: str,
+    arch_vectors: dict,
+    reference: str,
+    reference_vectors: dict,
+    axes: list | None = None,
+) -> dict:
+    """Matched-config paired statistics of ``arch`` against ``reference``.
+
+    Inputs map seed → assembled error vector at one matched config. Per axis
+    (never collapsed): per-seed paired differences (arch − reference),
+    improvement/worsening/tie counts, standardized mean difference dz
+    (mean(d)/sd(d), ddof=1; 0.0 when sd is 0), and an exact two-sided sign
+    test over the non-tied differences. Seeds present in only one architecture
+    are reported under ``unmatched`` and excluded from the pairing.
+    """
+    import math
+
+    axes = axes if axes is not None else [n for n in AXES if n in next(iter(arch_vectors.values()), {})]
+    matched = sorted(set(arch_vectors) & set(reference_vectors))
+    unmatched = {
+        arch: sorted(set(arch_vectors) - set(reference_vectors)),
+        reference: sorted(set(reference_vectors) - set(arch_vectors)),
+    }
+    out: dict = {"arch": arch, "reference": reference, "matched_seeds": matched, "axes": {}, "unmatched": unmatched, "complete": not any(unmatched.values())}
+    for axis in axes:
+        diffs = [
+            float(arch_vectors[s][axis]) - float(reference_vectors[s][axis])
+            for s in matched
+            if axis in arch_vectors[s] and axis in reference_vectors[s]
+        ]
+        improvements = sum(d < 0 for d in diffs)
+        worsenings = sum(d > 0 for d in diffs)
+        ties = sum(d == 0 for d in diffs)
+        n_eff = len(diffs) - ties
+        mean = sum(diffs) / len(diffs) if diffs else 0.0
+        var = (
+            sum((d - mean) ** 2 for d in diffs) / (len(diffs) - 1)
+            if len(diffs) > 1
+            else 0.0
+        )
+        sd = math.sqrt(var)
+        # dz is oriented toward improvement: (reference − arch)/sd, so a
+        # positive dz means the architecture reduced the error vs the reference
+        dz = (-mean / sd) if sd > 0 else 0.0
+        # exact two-sided sign test over the non-tied differences
+        if n_eff > 0:
+            k = min(improvements, worsenings)
+            tail = sum(math.comb(n_eff, i) for i in range(0, k + 1)) / 2**n_eff
+            p = min(1.0, 2 * tail)
+        else:
+            p = 1.0
+        verdict = "no-difference" if n_eff == 0 or improvements == worsenings else (
+            "improved" if improvements > worsenings else "worsened"
+        )
+        out["axes"][axis] = {
+            "n": len(diffs),
+            "matched_seeds": matched,
+            "diffs": diffs,
+            "improvements": improvements,
+            "worsenings": worsenings,
+            "ties": ties,
+            "mean_diff": mean,
+            "dz": dz,
+            "sign_test_p": p,
+            "verdict": verdict,
+        }
+    return out
 
 
 def tuning_limit(config_value: float, band: tuple, improved: bool) -> bool:
@@ -200,6 +302,73 @@ def _ascii_scatter(points) -> str:
     return "\n".join([top, *body, bottom])
 
 
+def flat_dimensions(rows, axes: list | None = None) -> list[dict]:
+    """Per-axis insensitive-parameter flags over the sampled configs.
+
+    ``rows`` are assembled per-seed rows (``config`` + ``score_result``, as
+    taken by ``render_report``). For each axis: the largest within-config seed
+    spread vs the between-config range of the seed-averaged values — an axis
+    is flat when seed noise covers the config range (``noise_domination``),
+    i.e. tuning cannot move it.
+    """
+    per_config: dict[str, dict[int, dict]] = {}
+    for r in rows:
+        vector = (
+            assemble_error_vector(
+                r["score_result"], config=str(r["config"]), seed=int(r["seed"]), fixture=bool(r.get("fixture", True))
+            )
+            if "score_result" in r
+            else r
+        )
+        if not vector.get("excluded"):
+            per_config.setdefault(str(r["config"]), {})[int(r["seed"])] = vector
+    names = []
+    if axes is not None:
+        names = axes
+    elif per_config:
+        first_config_vectors = next(iter(per_config.values()))
+        first_vector = next(iter(first_config_vectors.values()), {})
+        names = _axis_names({"v": first_vector})
+    out = []
+    for axis in names:
+        spreads = []
+        avgs = []
+        for seeds in per_config.values():
+            values = [float(v[axis]) for v in seeds.values() if axis in v]
+            if values:
+                spreads.append(max(values) - min(values))
+                avgs.append(sum(values) / len(values))
+        max_spread = max(spreads) if spreads else 0.0
+        config_range = (max(avgs) - min(avgs)) if len(avgs) > 1 else 0.0
+        out.append(
+            {
+                "axis": axis,
+                "max_seed_spread": max_spread,
+                "config_range": config_range,
+                "flat": noise_domination(max_spread, config_range),
+            }
+        )
+    return out
+
+
+def bound_pressing(patch: dict, bands_by_path: dict) -> list[dict]:
+    """Band-edge hits in a flat config patch ({dotted.path: value}).
+
+    Unknown paths are ignored (architecture-level patches legitimately carry
+    non-band keys). Returns one entry per parameter sitting on an edge.
+    """
+    hits = []
+    for path, value in patch.items():
+        band = bands_by_path.get(path)
+        if band is None:
+            continue
+        if math.isclose(float(value), band["low"]):
+            hits.append({"param": path, "value": float(value), "edge": "low"})
+        elif math.isclose(float(value), band["high"]):
+            hits.append({"param": path, "value": float(value), "edge": "high"})
+    return sorted(hits, key=lambda h: h["param"])
+
+
 def render_report(rows, fixture: bool = True, expected_seeds: list | None = None) -> dict:
     """Deterministic JSON + Markdown report over assembled rows.
 
@@ -216,6 +385,8 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         )
         for row in rows
     ]
+    # aggregate over whatever axes the vectors carry (2-D time-use default)
+    axis_names = _axis_names({"v": vectors[0]}) if vectors else list(_DEFAULT_AXES)
     seeds_seen = sorted({int(r["seed"]) for r in rows})
     want_seeds = sorted(expected_seeds) if expected_seeds is not None else seeds_seen
 
@@ -228,7 +399,7 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         legs = {
             seed: v for seed, v in per_config[config].items() if not v.get("excluded")
         }
-        avg = average_across_seeds(config, legs, expected_seeds=want_seeds)
+        avg = average_across_seeds(config, legs, expected_seeds=want_seeds, axes=axis_names)
         if not legs and expected_seeds is None:
             avg["complete"] = True  # single gated-out leg: incompleteness is not the issue
         configs_out[config] = avg
@@ -282,6 +453,50 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         "tuning_limit": [],
     }
 
+    # per-axis insensitive-parameter flags + band-edge pressing (step 11)
+    flat_axes = flat_dimensions(rows)
+    bands_by_path = {}
+    try:
+        from benchmark.mcf import config_space as _cs
+
+        bands_by_path = {b["path"]: b for b in _cs.BANDS.values()}
+    except ImportError:
+        pass
+    patches_by_config: dict[str, dict] = {}
+    for r in rows:
+        patch = r.get("patch")
+        if patch and str(r["config"]) not in patches_by_config:
+            patches_by_config[str(r["config"])] = patch
+    front_points_set = {tuple(p) for p in front}
+    bound_hits = []
+    for config, avg in configs_out.items():
+        point = (avg["paid_work_error"], avg["leisure_social_error"])
+        if point not in front_points_set:
+            continue
+        for hit in bound_pressing(patches_by_config.get(config, {}), bands_by_path):
+            bound_hits.append({"config": config, **hit})
+    diagnostics["flat_dimensions"] = flat_axes
+    diagnostics["bound_pressing"] = bound_hits
+
+    insensitive = [d["axis"] for d in flat_axes if d["flat"]]
+    empirical_limitations = {
+        "coverage_gates": {
+            "frontier_valid": frontier_valid,
+            "reason": gate_reason,
+            "MIN_COMPARISON_DAYS": 7,
+            "MIN_COMPARISON_POPULATION": 20,
+        },
+        "incomplete_configs": sorted(c for c in configs_out if not configs_out[c]["complete"]),
+        "insensitive_params": insensitive,
+        "fixture_label": "SYNTHETIC FIXTURE" if fixture else "empirical",
+        "note": (
+            "Frontier comparisons are only as good as leg coverage: gated-out legs "
+            "and incomplete configs shrink the evidence; insensitive parameters "
+            "cannot be tuned within their bands; band-edge configs may only look "
+            "nondominated because the sampler cannot go further."
+        ),
+    }
+
     incomplete = [c for c, a in configs_out.items() if not a["complete"]]
     doc = {
         "configs": configs_out,
@@ -297,6 +512,7 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         },
         "fixture": bool(fixture),
         "incomplete_configs": incomplete,
+        "empirical_limitations": empirical_limitations,
     }
     json_text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
 
@@ -333,6 +549,17 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         "",
         f"- noise_domination flagged: {noisy}",
         f"- incomplete configs: {incomplete or 'none'}",
+        f"- insensitive parameters (flat axes): {insensitive or 'none'}",
+        f"- bound-pressing frontier configs: {bound_hits or 'none'}",
+        "",
+        "## Empirical limitations",
+        "",
+        f"- coverage gates: frontier_valid: {frontier_valid} — {gate_reason}",
+        f"- MIN_COMPARISON_DAYS=7, MIN_COMPARISON_POPULATION=20",
+        f"- incomplete configs (missing legs, loud): {incomplete or 'none'}",
+        f"- insensitive parameters (seed spread covers config range, tuning cannot "
+        f"move them): {insensitive or 'none'}",
+        f"- data label: {empirical_limitations['fixture_label']}",
         "",
     ]
     md_text = "\n".join(lines)

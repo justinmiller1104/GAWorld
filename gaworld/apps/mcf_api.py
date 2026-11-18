@@ -342,6 +342,21 @@ def _run_job(exp_id: str) -> None:
             os.replace(tmp, legs_path)
         exp["status"] = "completed" if not exp["progress"]["failures"] else "completed_with_failures"
         _save_exp(exp)
+        # persist the reopenable experiment manifest (plan step 12) — the GUI
+        # results endpoint reads it back via benchmark.mcf.manifest.load_manifest
+        try:
+            from benchmark.mcf.manifest import build_manifest, save_manifest
+
+            try:
+                results = _compute_results(exp)
+            except Exception:
+                results = None
+            save_manifest(
+                os.path.join(_exp_dir(_mcf_root(), exp_id), "manifest.json"),
+                build_manifest(exp, rows, results=results),
+            )
+        except Exception:
+            pass
     except Exception as exc:
         exp["status"] = "failed"
         exp["last_error"] = f"{type(exc).__name__}: {exc}"

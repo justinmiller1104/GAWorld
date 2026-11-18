@@ -144,3 +144,27 @@ def apply_patch(config: dict[str, Any], patch: dict[str, Any]) -> None:
             apply_patch(config[key], value)
         else:
             config[key] = value
+
+
+def sample(n: int, method: str = "endpoints", params: list[str] | None = None) -> list[dict[str, Any]]:
+    """Sample ``n`` flat config patches ({dotted.path: value}) over the bands.
+
+    ``method="sobol"`` uses :mod:`benchmark.mcf.sampler` (deterministic,
+    strictly inside every band); ``method="endpoints"`` returns the
+    one-at-a-time low/high endpoints (``endpoint_configs``, flat form, ``n``
+    is a no-op cap kept for interface symmetry). Unknown methods raise.
+    """
+    if method not in ("endpoints", "sobol"):
+        raise ValueError(f"unknown sampling method {method!r} (use 'sobol' or 'endpoints')")
+    names = list(params) if params is not None else list(BANDS)
+    chosen = [BANDS[name] for name in names]
+    if method == "endpoints":
+        patches = []
+        for band in chosen:
+            for value in (band["low"], band["high"]):
+                patches.append({band["path"]: value})
+        return patches if n >= len(patches) else patches[:n]
+    from benchmark.mcf import sampler
+
+    points = sampler.sample(n, chosen)
+    return [{band["path"]: value for band, value in zip(chosen, point, strict=True)} for point in points]

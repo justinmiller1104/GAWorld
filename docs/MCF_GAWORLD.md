@@ -662,3 +662,35 @@ verdict, which is judged on the disagreement rate; a `MISSING` arm stays
   attempt, so a mid-run `update_config` intervention (e.g. a crowding shock on
   `local_physical.capacity.agents_represent`) reaches admission decisions on the NEXT attempt without a
   re-run. Node-attribute capacities were already read live; denial/redirect records are unchanged.
+
+## 9. Plan steps 8–12 (sampler, k-dim vectors, paired stats, diagnostics, manifest)
+
+- **Sobol sampling** (`benchmark/mcf/sampler.py`, `config_space.sample(n, method=…)`):
+  deterministic scrambled Sobol sequences via `scipy.stats.qmc`, remapped
+  into the admissible bands; points are strictly interior (edge hits are
+  re-drawn, never clamped), so a sampled config never sits on a band
+  endpoint. Any positive n works; power-of-2 n keeps the full balance
+  properties of the digital net. Excluded parameters are not bands and are
+  unreachable. `method="endpoints"` keeps the one-at-a-time low/high sampler.
+- **k-dimensional error vectors**: `frontier.AXES` maps objective names to
+  `per_category` extractors (the time-use 2-D pair is the default);
+  `assemble_error_vector`/`average_across_seeds` accept an `axes` override,
+  and `pareto_frontier`/`arch_compare` are dimension-agnostic (weak
+  domination: points tied on one axis neither dominate nor exclude each
+  other on the front).
+- **Paired architecture stats**: `frontier.paired_arch_stats` reports, per
+  axis (never collapsed), per-seed paired differences, improvement/worsening/
+  tie counts, dz (oriented toward improvement), and an exact two-sided sign
+  test over non-tied differences; unmatched seeds are reported, not dropped.
+- **Diagnostics**: `frontier.flat_dimensions` flags axes whose between-seed
+  spread covers the between-config range (insensitive parameters);
+  `frontier.bound_pressing` flags nondominated configs sitting at band
+  edges. `render_report` carries a diagnostics + empirical-limitations block
+  (coverage gates, frontier_valid, incomplete legs, insensitive params).
+- **Experiment manifest** (`benchmark/mcf/manifest.py`): one JSON per
+  experiment binding identity, architecture deltas, model info, sampler,
+  configs with reproducible `config_id`s, seeds, per-leg run references +
+  usage + outcomes (failures loud, `complete: false`), error vectors,
+  nondominated sets, A(M1|M0), diagnostics and verdicts. `load_manifest(path)`
+  reopens it; the launch job writes `manifest.json` into the experiment
+  directory on completion.

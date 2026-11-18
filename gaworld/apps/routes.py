@@ -48,6 +48,7 @@ GET_ROUTES = (
     Route("organizations_api", "/api/organizations/", bare=True),
     Route("infosources_api", "/api/infosources/"),
     Route("bench_api", "/api/bench/"),
+    Route("mcf_api", "/api/mcf/"),
     Route("economy_api", "/api/economy/"),
     # Population Studio / group mode.
     Route("population_api", "/api/population"),
@@ -83,6 +84,7 @@ POST_ROUTES = (
     Route("organizations_api", "/api/organizations/", bare=True),
     Route("analysis_api", "/api/analysis/"),
     Route("bench_api", "/api/bench/"),
+    Route("mcf_api", "/api/mcf/"),
     Route("population_api", "/api/population"),
     Route("import_api", "/api/import"),
     Route("persona_generate_api", "/api/persona-generate", bare=True),

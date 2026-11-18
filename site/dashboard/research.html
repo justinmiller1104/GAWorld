@@ -41,6 +41,7 @@
       <button type="button" class="rw-tab" role="tab" id="rwTabPolicy" data-tab="policy" aria-selected="false" aria-controls="rwPanePolicy" data-i18n="research.tab_policy">政策仿真与优化</button>
       <button type="button" class="rw-tab" role="tab" id="rwTabReplication" data-tab="replication" aria-selected="false" aria-controls="rwPaneReplication" data-i18n="research.tab_replication">社会调查/实验拟合度</button>
       <button type="button" class="rw-tab" role="tab" id="rwTabWorlds" data-tab="worlds" aria-selected="false" aria-controls="rwPaneWorlds" data-i18n="research.tab_worlds">平行世界 · 反事实推断</button>
+      <button type="button" class="rw-tab" role="tab" id="rwTabMcf" data-tab="mcf" aria-selected="false" aria-controls="rwPaneMcf">MCF 工作流</button>
       <button type="button" class="rw-tab" role="tab" id="rwTabOrganizationIntelligence" data-tab="organization-intelligence" aria-selected="false" aria-controls="rwPaneOrganizationIntelligence" data-i18n="oi3.tab">组织智能</button>
     </nav>
 
@@ -545,6 +546,97 @@
         </div>
       </footer>
     </section>
+
+    <!-- ============ MCF 研究工作流 ============ -->
+    <section class="studio-main rw-main" id="rwPaneMcf" role="tabpanel" aria-labelledby="rwTabMcf" hidden>
+      <div class="pw-grid2" style="align-items:start">
+        <!-- 左：实验清单与新建 -->
+        <aside class="rw-column">
+          <div class="pw-card">
+            <div class="pw-card-head">
+              <h2>MCF 实验</h2>
+              <div class="pw-chart-tools">
+                <select id="mcfHistory" aria-label="历史实验"></select>
+                <button class="button subtle" id="mcfRefresh" type="button">刷新</button>
+              </div>
+            </div>
+            <p class="rw-hint">多配置前沿（MCF）：让几种行为架构扫过同一组可调参数带，
+              用真实的耗时结构误差向量比较它们的可达前沿。数据只来自实际跑完的仿真腿。</p>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-head"><h2>新建实验</h2></div>
+            <div class="pw-fields">
+              <label>实验名称<input id="mcfName" type="text" placeholder="例如：真实感规则是否扩大可达前沿" /></label>
+              <label>架构 M0（基线）标签<input id="mcfLabel0" type="text" value="M0 基线" /></label>
+              <label>M0 配置补丁（JSON，点路径 → 值）<textarea id="mcfPatch0" rows="2">{}</textarea></label>
+              <label>架构 M1 标签<input id="mcfLabel1" type="text" value="M1 真实感" /></label>
+              <label>M1 配置补丁（JSON）<textarea id="mcfPatch1" rows="2">{"personality.channels.rules": true}</textarea></label>
+              <fieldset><legend>扫描的参数带（范围与出处见下表）</legend><div id="mcfParamChecks"></div></fieldset>
+              <label>采样方式
+                <select id="mcfSampler">
+                  <option value="endpoints">端点采样（每带取低/高）</option>
+                  <option value="sobol">Sobol</option>
+                </select>
+              </label>
+              <label>配置数（每架构）<input id="mcfNConfigs" type="number" min="1" max="64" value="2" /></label>
+              <label>种子数<input id="mcfNSeeds" type="number" min="1" max="32" value="1" /></label>
+              <label>种子列表（逗号分隔，留空自动）<input id="mcfSeeds" type="text" placeholder="7, 11" /></label>
+              <label>每腿预算：调用上限<input id="mcfMaxCalls" type="number" min="1" value="21000" /></label>
+              <label>每腿预算：token 上限<input id="mcfMaxTokens" type="number" min="1" value="11000000" /></label>
+              <label>每腿预算：秒上限<input id="mcfMaxElapsed" type="number" min="1" value="80000" /></label>
+            </div>
+            <div class="pw-chart-tools"><button class="button primary" id="mcfCreate" type="button">创建实验（不运行）</button></div>
+            <details><summary>可调参数带（边界与出处）</summary><div class="pw-table" id="mcfBands"></div></details>
+            <div class="rw-hint" id="mcfFormError"></div>
+          </div>
+        </aside>
+
+        <!-- 右：运行与结果 -->
+        <section class="pw-observe">
+          <div class="pw-card">
+            <div class="pw-card-head">
+              <h2>运行与进度</h2>
+              <div class="pw-chart-tools">
+                <label class="pw-check"><input type="checkbox" id="mcfConfirmCost" /> 确认成本（估计调用超阈值时必勾）</label>
+                <button class="button primary" id="mcfLaunch" type="button" disabled>启动实验</button>
+              </div>
+            </div>
+            <div class="pw-readout" id="mcfProgress">没有选中的实验。</div>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-head">
+              <h2>帕累托前沿（误差向量，越低越好）</h2>
+            </div>
+            <div class="pw-svgwrap" id="mcfPareto"></div>
+            <div class="pw-readout" id="mcfParetoNote"></div>
+          </div>
+
+          <div class="pw-card">
+            <div class="pw-card-head"><h2>逐配置结果（跨种子均值）</h2></div>
+            <div class="pw-table" id="mcfTable"></div>
+          </div>
+
+          <div class="pw-grid2">
+            <div class="pw-card">
+              <div class="pw-card-head"><h2>诊断</h2></div>
+              <div class="pw-table" id="mcfDiagnostics"></div>
+            </div>
+            <div class="pw-card">
+              <div class="pw-card-head">
+                <h2>导出</h2>
+                <div class="pw-chart-tools">
+                  <button class="button subtle" id="mcfReport" type="button">生成报告</button>
+                  <button class="button subtle" id="mcfExport" type="button">下载 JSON</button>
+                </div>
+              </div>
+              <pre id="mcfReportOut" class="rw-hint" style="white-space:pre-wrap"></pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
   </main>
   <script src="/site/dashboard/i18n.js"></script>
 
@@ -561,5 +653,6 @@
   <script src="/site/dashboard/policy-sim.js"></script>
   <script src="/site/dashboard/replication.js"></script>
   <script src="/site/dashboard/worlds.js"></script>
+  <script src="/site/dashboard/mcf.js"></script>
 </body>
 </html>

@@ -433,14 +433,35 @@ def _compute_results(exp: dict[str, Any]) -> dict[str, Any]:
             frontier_valid=bool(score.get("frontier_valid")),
             fixture=bool(score.get("fixture")),
         )
-        vectors.append(
-            frontier.assemble_error_vector(
-                score_result,
-                config=label,
-                seed=int(row["seed"]),
-                fixture=bool(score.get("fixture")),
+        try:
+            vectors.append(
+                frontier.assemble_error_vector(
+                    score_result,
+                    config=label,
+                    seed=int(row["seed"]),
+                    fixture=bool(score.get("fixture")),
+                )
             )
-        )
+        except KeyError:
+            # a real leg can leave a frontier dimension unscored (paid_work
+            # over zero employed agent-days scores as error=None). One
+            # unscored leg must not void the results for the others — mark
+            # it excluded with an explicit reason (same choice as the
+            # None/NaN frontier sanitization) and keep the NaN axis out of
+            # the points via average_across_seeds.
+            vectors.append(
+                {
+                    "config": label,
+                    "seed": int(row["seed"]),
+                    "frontier_valid": False,
+                    "fixture": bool(score.get("fixture")),
+                    "excluded": True,
+                    "reason": (
+                        "unscored frontier dimensions: paid_work_error is None "
+                        "(zero employed agent-days scored) — leg excluded, not fatal"
+                    ),
+                }
+            )
 
     expected_seeds = sorted(int(s) for s in exp["seeds"])
     arch_ids = [a["id"] for a in exp["architectures"]]
@@ -451,7 +472,12 @@ def _compute_results(exp: dict[str, Any]) -> dict[str, Any]:
         for vector in own:
             per_seed.setdefault(vector["config"], {})[vector["seed"]] = vector
         configs = [
-            frontier.average_across_seeds(config, seeds, expected_seeds=expected_seeds)
+            frontier.average_across_seeds(
+                config,
+                seeds,
+                expected_seeds=expected_seeds,
+                axes=list(frontier._DEFAULT_AXES),
+            )
             for config, seeds in sorted(per_seed.items())
         ]
         points = [

@@ -148,6 +148,7 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> 
     the actual simulator entry module — the same launch path
     ``launch.run_canary_simulation`` uses."""
     from gaworld.settings import CONFIG
+    import gaworld.llm.providers as providers
 
     original = {key: json.loads(json.dumps(CONFIG.get(key))) for key in config}
     original_seed = CONFIG.get("random_seed")
@@ -158,6 +159,12 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> 
             else:
                 CONFIG[key] = json.loads(json.dumps(value))
         CONFIG["random_seed"] = int(seed)
+        # the sim emits episode files under CONFIG["memory_dir"] (default
+        # output/memory); point it at this leg's run dir so _surface_episodes
+        # can hand the real spans to the scorer — without it a real leg always
+        # scored as empty
+        original_memory_dir = CONFIG.get("memory_dir")
+        CONFIG["memory_dir"] = str(run_dir)
         (Path(run_dir) / "config.json").write_text(
             json.dumps(json.loads(json.dumps(CONFIG)), ensure_ascii=False, default=str, indent=2),
             encoding="utf-8",
@@ -165,13 +172,34 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> 
         import generative_city_sim  # imported after the canary install so its
         # from-import of call_llm captures the wrapped callable
 
-        generative_city_sim.run_simulation()
+        # the entry module binds call_llm at its FIRST import, so leg 2+ would
+        # keep calling leg 1's exhausted canary wrapper (instant budget kill);
+        # rebind to this leg's current (wrapped) callable and restore after.
+        # gaworld.cognition.realism has the same top-level from-import and is
+        # on the per-tick cognition path — rebind it too
+        import gaworld.cognition.realism as _realism
+
+        original_sim_llm = generative_city_sim.__dict__.get("call_llm")
+        original_realism_llm = _realism.__dict__.get("call_llm")
+        generative_city_sim.call_llm = providers.call_llm
+        _realism.call_llm = providers.call_llm
+        try:
+            generative_city_sim.run_simulation()
+        finally:
+            if original_sim_llm is not None:
+                generative_city_sim.call_llm = original_sim_llm
+            if original_realism_llm is not None:
+                _realism.call_llm = original_realism_llm
     finally:
         for key, value in original.items():
             if value is None:
                 CONFIG.pop(key, None)
             else:
                 CONFIG[key] = value
+        if original_memory_dir is None:
+            CONFIG.pop("memory_dir", None)
+        else:
+            CONFIG["memory_dir"] = original_memory_dir
         if original_seed is None:
             CONFIG.pop("random_seed", None)
         else:

@@ -114,11 +114,18 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
         arch_id = str(arch.get("id") or "").strip()
         if not arch_id:
             return {}, "every architecture needs an id"
+        patch = dict(arch.get("patch") or {})
+        try:
+            from benchmark.mcf.config_space import validate_arch_patch
+
+            validate_arch_patch(patch)
+        except ValueError as exc:
+            return {}, str(exc)
         clean_archs.append(
             {
                 "id": arch_id,
                 "label": str(arch.get("label") or arch_id),
-                "patch": dict(arch.get("patch") or {}),
+                "patch": patch,
             }
         )
 
@@ -166,6 +173,7 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
         return {}, "reference_architecture must be one of the architectures"
 
     budget = dict(payload.get("budget") or {})
+    employed_agent_ids = [int(i) for i in (payload.get("employed_agent_ids") or [])]
     spec = {
         "name": name,
         "note": str(payload.get("note") or ""),
@@ -175,6 +183,7 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
         "objectives": objectives,
         "sampler": sampler,
         "harness": harness,
+        "employed_agent_ids": employed_agent_ids,
         "n_configs": n_configs,
         "n_seeds": n_seeds,
         "seeds": seeds,
@@ -309,7 +318,7 @@ def _run_job(exp_id: str) -> None:
         _save_exp(exp)
         return
     try:
-        from benchmark.mcf.config_space import validate_config
+        from benchmark.mcf.config_space import apply_patch, validate_arch_patch, validate_config
         from benchmark.mcf.orchestrator import run_legs
 
         scorer = _build_scorer(exp)
@@ -317,19 +326,26 @@ def _run_job(exp_id: str) -> None:
         rows: list[dict[str, Any]] = []
         root = _mcf_root()
         for arch in exp["architectures"]:
-            base = {str(path): value for path, value in arch.get("patch").items()}
-            leg_pairs = [
-                (validate_config({**base, **cfg}), seed)
-                for cfg in _sample_configs(exp)
-                for seed in exp["seeds"]
-            ]
+            # The arch patch is mechanism-level (Θ band paths are rejected at
+            # spec level) so it validates separately from the sampled Θ patch.
+            base = validate_arch_patch({str(path): value for path, value in arch.get("patch").items()})
+            leg_pairs = []
+            for cfg in _sample_configs(exp):
+                nested = validate_config(cfg)
+                apply_patch(nested, base)
+                for seed in exp["seeds"]:
+                    leg_pairs.append((nested, seed))
             run_root = os.path.join(_exp_dir(root, exp_id), arch["id"])
-            # stub legs declare their employed cohort (participants basis):
-            # without it paid_work scores as error=None and the frontier
-            # assembler rightly refuses the vector
+            # stub legs declare their built-in cohort; real legs take the
+            # cohort declared in the spec (participants basis): without it
+            # paid_work scores as error=None and the frontier assembler
+            # rightly refuses the vector
             from benchmark.mcf.leg_runner import STUB_EMPLOYED_AGENTS
 
-            employed = STUB_EMPLOYED_AGENTS if _is_stub(exp) else ()
+            if _is_stub(exp):
+                employed = STUB_EMPLOYED_AGENTS
+            else:
+                employed = tuple(int(i) for i in (exp.get("employed_agent_ids") or []))
             table = run_legs(
                 leg_pairs,
                 harness=harness,

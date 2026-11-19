@@ -198,7 +198,7 @@ TARGETS_2018: dict[str, dict[str, object]] = {
 
 # First match wins, so more specific markers come before generic ones.
 _KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("paid_work", ("上班", "工作", "加班", "办公", "开会", "写报告")),
+    ("paid_work", ("上班", "工作", "加班", "办公", "开会", "写报告", "兼职", "接单", "值班", "实习")),
     ("commuting", ("通勤", "上班路上", "坐车", "乘地铁", "乘公交")),
     ("sleep", ("睡觉", "午休", "睡前", "入睡", "补觉")),
     ("meals", ("用餐", "吃饭", "吃早饭", "吃午饭", "吃晚饭", "吃夜宵", "进食")),
@@ -849,6 +849,23 @@ def score_against_targets(
     )
 
 
+def _clamp_minutes(minutes: dict[str, int], budget: int) -> None:
+    """Trim ``minutes`` in place to at most ``budget`` total (never below zero)."""
+    excess = sum(minutes.values()) - budget
+    if excess <= 0:
+        return
+    take = min(minutes.get(UNKNOWN, 0), excess)
+    if take:
+        minutes[UNKNOWN] -= take
+        excess -= take
+    for category in sorted(minutes, key=lambda c: -minutes[c]):
+        if excess <= 0:
+            break
+        take = min(minutes[category], excess)
+        minutes[category] -= take
+        excess -= take
+
+
 def score_directory(
     directory: str | Path,
     employed_agent_ids: Iterable[int],
@@ -890,6 +907,17 @@ def score_directory(
                 )
             ]
             snapshot_daily = compute_daily_minutes(episodes, tick_minutes)
+            # Snapshot reconstruction may only attribute the *complement* of
+            # the span intervals: compute_daily_minutes sees the remaining
+            # boundary snapshots and re-attributes the span-covered minutes
+            # between them, which inflates agent-day totals past 1440. Any
+            # overflow is the double-counted span overlap — trim ``unknown``
+            # first (that overlap is genuinely unattributable), then the
+            # reconstructed categories, never the span minutes themselves.
+            for agent_id, days in snapshot_daily.items():
+                for day, minutes in days.items():
+                    span_minutes = sum(span_daily.get(agent_id, {}).get(day, {}).values())
+                    _clamp_minutes(minutes, MINUTES_PER_DAY - span_minutes)
             agent_daily: dict[int, dict[int, dict[str, int]]] = {}
             for source in (span_daily, snapshot_daily):
                 for agent_id, days in source.items():

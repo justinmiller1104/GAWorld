@@ -90,6 +90,29 @@ STRESS_VALUES: tuple[float, ...] = time_use.STRESS_STYLE_FIT
 
 _BAND_BY_PATH = {band["path"]: (name, band) for name, band in BANDS.items()}
 
+# Architecture/Θ disjointness (MCF §3.1): an architecture fixes the model's
+# mechanisms; the quantities tuned within it are the sampled Θ bands. A band
+# path in an arch patch would make A(M1|M0) degenerate (the "architecture
+# delta" is a point of M0's own attainable set), so it is rejected.
+ARCH_RESERVED_PATHS: frozenset[str] = frozenset(_BAND_BY_PATH)
+
+
+def validate_arch_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    """Validate a flat ``{dotted.path: value}`` architecture patch.
+
+    Mechanism-level toggles (e.g. ``personality.channels.rules``) pass and
+    the nested patch is returned. A Θ band path raises ``ValueError`` —
+    vary it in the sampled bands, not the architecture.
+    """
+    nested: dict[str, Any] = {}
+    for path, value in patch.items():
+        if path in ARCH_RESERVED_PATHS:
+            raise ValueError(
+                f"{path} is a Θ parameter; vary it in the sampled bands, not the architecture"
+            )
+        nested.update(patch_for(path, value))
+    return nested
+
 
 def validate_config(patch: dict[str, Any]) -> dict[str, Any]:
     """Validate a flat ``{dotted.path: value}`` patch and return the nested patch.

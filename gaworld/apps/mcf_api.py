@@ -441,23 +441,31 @@ def _compute_results(exp: dict[str, Any]) -> dict[str, Any]:
     vectors: list[dict[str, Any]] = []
     for row in legs:
         score = row.get("score")
-        if row.get("status") != "completed" or not isinstance(score, dict):
+        # interrupted-but-scored legs carry real (partial) agent-days and
+        # must aggregate — otherwise real runs show an empty GUI. Only
+        # unscored legs stay out (they are already in the interruptions
+        # list below).
+        if row.get("status") not in ("completed", "interrupted") or not isinstance(score, dict):
+            continue
+        per_category = score.get("per_category")
+        if not isinstance(per_category, dict) or not per_category:
             continue
         label = f"{row['arch']}/{row['config_id']}"
+        leg_status = row.get("status")
         score_result = SimpleNamespace(
             per_category=score.get("per_category") or {},
             frontier_valid=bool(score.get("frontier_valid")),
             fixture=bool(score.get("fixture")),
         )
         try:
-            vectors.append(
-                frontier.assemble_error_vector(
-                    score_result,
-                    config=label,
-                    seed=int(row["seed"]),
-                    fixture=bool(score.get("fixture")),
-                )
+            vector = frontier.assemble_error_vector(
+                score_result,
+                config=label,
+                seed=int(row["seed"]),
+                fixture=bool(score.get("fixture")),
             )
+            vector["leg_status"] = leg_status
+            vectors.append(vector)
         except KeyError:
             # a real leg can leave a frontier dimension unscored (paid_work
             # over zero employed agent-days scores as error=None). One
@@ -471,6 +479,7 @@ def _compute_results(exp: dict[str, Any]) -> dict[str, Any]:
                     "seed": int(row["seed"]),
                     "frontier_valid": False,
                     "fixture": bool(score.get("fixture")),
+                    "leg_status": leg_status,
                     "excluded": True,
                     "reason": (
                         "unscored frontier dimensions: paid_work_error is None "
@@ -574,6 +583,8 @@ def _compute_results(exp: dict[str, Any]) -> dict[str, Any]:
         for c in a["configs"]
         if not c["complete"]
     ]
+    # interruptions list: interrupted legs stay flagged here even when they
+    # scored (partial agent-days), so the GUI can still mark them partial
     diagnostics["failed_legs"] = [
         {
             "arch": r.get("arch"),
@@ -581,6 +592,7 @@ def _compute_results(exp: dict[str, Any]) -> dict[str, Any]:
             "seed": r.get("seed"),
             "status": r.get("status"),
             "stop_reason": r.get("stop_reason"),
+            "scored": bool(isinstance(r.get("score"), dict) and r.get("score", {}).get("per_category")),
         }
         for r in legs
         if r.get("status") not in ("completed",)

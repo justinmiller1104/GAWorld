@@ -12,13 +12,45 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from typing import Any
 
 from benchmark.mcf.config_space import config_id
 
-__all__ = ["build_manifest", "save_manifest", "load_manifest"]
+__all__ = ["build_manifest", "save_manifest", "load_manifest", "code_commit", "targets_provenance"]
 
 _SCHEMA_VERSION = 1
+
+
+def code_commit() -> str:
+    """Best-effort ``git rev-parse HEAD``; a clear placeholder when unavailable."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return out.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def targets_provenance() -> dict[str, Any]:
+    """Provenance of the scoring targets: 2024 national time-use survey."""
+    from benchmark.mcf.time_use import TARGETS_2024
+
+    return {
+        "targets": "TARGETS_2024",
+        "source": "2024年全国时间利用调查公报（第二号，NBS）",
+        "module": "benchmark.mcf.time_use",
+        "categories": sorted(TARGETS_2024),
+        "notes": (
+            "paid_work is participants-basis (scored over employed agents); "
+            "study is child-inflated and excluded from scoring by default"
+        ),
+    }
 
 
 def build_manifest(
@@ -87,6 +119,12 @@ def build_manifest(
         "n_configs": exp.get("n_configs"),
         "seeds": list(exp.get("seeds") or []),
         "model": dict(exp.get("model") or {}),
+        # reproducibility basis (task 3843): who scored, at what tick
+        # granularity, against which survey targets, from which source tree
+        "employed_agent_ids": [int(i) for i in (exp.get("employed_agent_ids") or [])],
+        "tick_minutes": int(exp.get("tick_minutes") or 10),
+        "code_commit": str(exp.get("code_commit") or code_commit()),
+        "targets_provenance": exp.get("targets_provenance") or targets_provenance(),
         "configs": configs,
         "legs": leg_entries,
         "failures": failures,

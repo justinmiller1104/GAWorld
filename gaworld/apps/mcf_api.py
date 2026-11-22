@@ -82,9 +82,68 @@ def bands() -> dict[str, Any]:
                 "low": band["low"],
                 "high": band["high"],
                 "source": band.get("source", ""),
+                "sources": list(band.get("sources", [])),
             }
         )
     return {"bands": out}
+
+
+def meta() -> dict[str, Any]:
+    """Researcher-facing metadata: gates, empirical targets, objective labels.
+
+    Everything here is read from real code constants (benchmark.mcf.time_use,
+    benchmark.mcf.frontier, benchmark.mcf.config_space) — nothing invented.
+    """
+    from benchmark.mcf import time_use as tu
+    from benchmark.mcf import frontier
+
+    objectives = []
+    for key in frontier._DEFAULT_AXES:
+        if key == "paid_work_error":
+            label = "Working-time error"
+            categories = ["paid_work"]
+        else:
+            label = "Leisure and social time error"
+            categories = ["leisure", "socializing"]
+        objectives.append(
+            {
+                "key": key,
+                "label": label,
+                "unit": "minutes/day",
+                "categories": categories,
+                "lower_is_better": True,
+            }
+        )
+    return {
+        "gates": {
+            "min_comparison_days": tu.MIN_COMPARISON_DAYS,
+            "min_comparison_population": tu.MIN_COMPARISON_POPULATION,
+        },
+        "targets": {
+            "dataset": "National time-use survey 2024 (NBS communiqué No. 2)",
+            "dataset_zh": "2024年全国时间利用调查（国家统计局公报第二号）",
+            "year": 2024,
+            "geography": "China (national)",
+            "units": "minutes/day",
+            "survey_basis": "weekly_average",
+            "categories": {
+                name: {
+                    "minutes": spec.get("minutes"),
+                    "basis": spec.get("basis"),
+                    "survey_basis": spec.get("survey_basis"),
+                }
+                for name, spec in tu.TARGETS_2024.items()
+            },
+        },
+        "objectives": objectives,
+        "runner_capabilities": {
+            "city_selectable": True,
+            "agents_selectable": True,
+            "days_configurable": True,
+            "employed_agent_ids": True,
+            "employed_agent_ids_note": "paid_work is a participants-basis survey average; scoring covers employed agents only",
+        },
+    }
 
 
 class _Unavailable(Exception):
@@ -174,6 +233,42 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
 
     budget = dict(payload.get("budget") or {})
     employed_agent_ids = [int(i) for i in (payload.get("employed_agent_ids") or [])]
+
+    # population + duration: wired to the real runner (benchmark/mcf/population.py
+    # resolves and validates the selection against the city's actual roster; the
+    # simulator consumes agent_ids / sim_days / city via CONFIG — the same keys
+    # generative_city_sim.run_simulation has always used).
+    sim_days_raw = payload.get("sim_days")
+    if sim_days_raw is not None:
+        try:
+            sim_days = int(sim_days_raw)
+        except (TypeError, ValueError):
+            return {}, "sim_days must be an integer"
+        if sim_days < 1:
+            return {}, "sim_days must be >= 1"
+        if sim_days > 365:
+            return {}, "sim_days must be <= 365"
+    else:
+        sim_days = None
+
+    population_payload = payload.get("population")
+    if population_payload is not None:
+        if not isinstance(population_payload, dict):
+            return {}, "population must be an object"
+        try:
+            from benchmark.mcf.population import resolve_population
+
+            population = resolve_population(population_payload)
+        except ImportError as exc:
+            raise _Unavailable(f"population integration unavailable ({exc})") from None
+        except ValueError as exc:
+            return {}, str(exc)
+        if employed_agent_ids:
+            # explicit scorer override wins, but never silently: keep both in
+            # the spec so provenance stays visible
+            population["manual_employed_override"] = employed_agent_ids
+        employed_agent_ids = list(population["employed_agent_ids"])
+
     spec = {
         "name": name,
         "note": str(payload.get("note") or ""),
@@ -190,6 +285,10 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
         "budget": budget,
         "model": dict(payload.get("model") or {}),
     }
+    if population_payload is not None:
+        spec["population"] = population
+    if sim_days is not None:
+        spec["sim_days"] = sim_days
     return spec, None
 
 
@@ -292,8 +391,25 @@ def _build_harness(exp: dict[str, Any]):
     from benchmark.mcf.leg_runner import make_leg_harness
 
     limits = {k: v for k, v in (exp.get("budget") or {}).items() if v is not None}
+    sim_context = None
+    if exp.get("population") and exp.get("sim_days"):
+        try:
+            from benchmark.mcf.population import config_overrides_for
+
+            sim_context = dict(config_overrides_for(exp["population"]["city"]))
+            sim_context["agent_ids"] = list(exp["population"]["agent_ids"])
+            sim_context["sim_days"] = int(exp["sim_days"])
+            sim_context["population_provenance"] = {
+                "city": exp["population"].get("city"),
+                "method": exp["population"].get("method"),
+                "n_agents": exp["population"].get("n_agents"),
+                "sample_seed": exp["population"].get("sample_seed"),
+            }
+        except Exception as exc:  # unknown city changed on disk -> fail honestly at launch
+            raise ValueError(f"population for city {exp.get('population', {}).get('city')!r} cannot be resolved: {exc}") from None
     return make_leg_harness(
-        limits=limits or None, stub=_is_stub(exp), model_info=dict(exp.get("model") or {})
+        limits=limits or None, stub=_is_stub(exp), model_info=dict(exp.get("model") or {}),
+        sim_context=sim_context,
     )
 
 
@@ -748,6 +864,41 @@ def experiment(exp_id: str) -> tuple[dict[str, Any], int]:
 
 def handle_get(path: str, query: dict) -> tuple[dict[str, Any], int]:
     route = path.rstrip("/")
+    if route == "/api/mcf/meta":
+        try:
+            return meta(), 200
+        except ImportError as exc:
+            return {"error": f"{exc}"}, 501
+    if route == "/api/mcf/sample-preview":
+        """Preview a population selection with the SAME resolution code the
+        creation path uses — identical random sampling, identical employment
+        derivation."""
+        try:
+            from benchmark.mcf.population import resolve_population, PopulationError
+
+            flat_query = {
+                key: (value[0] if isinstance(value, list) and value else value)
+                for key, value in dict(query).items()
+            }
+            population = resolve_population(flat_query)
+            return {
+                "city": population["city"],
+                "city_name": population["city_name"],
+                "method": population["method"],
+                "agent_ids": population["agent_ids"],
+                "n_agents": population["n_agents"],
+                "employed_agent_ids": population["employed_agent_ids"],
+                "n_employed": population["n_employed"],
+                "unknown_employment": population["unknown_employment"],
+            }, 200
+        except PopulationError as exc:
+            return {"error": str(exc)}, 400
+        except ImportError as exc:
+            return {"error": str(exc)}, 501
+        try:
+            return meta(), 200
+        except ImportError as exc:
+            return {"error": f"{exc}"}, 501
     if route == "/api/mcf/bands":
         try:
             return bands(), 200

@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/site/dashboard/styles.css" />
   <link rel="stylesheet" href="/site/dashboard/page-shell.css" />
   <link rel="stylesheet" href="/site/dashboard/research.css" />
+  <link rel="stylesheet" href="/site/dashboard/mcf.css" />
   <link rel="stylesheet" href="/site/dashboard/organization-intelligence.css" />
   <link rel="stylesheet" href="/site/dashboard/organization-comparison.css" />
   <link rel="stylesheet" href="/site/dashboard/worlds.css" />
@@ -41,7 +42,7 @@
       <button type="button" class="rw-tab" role="tab" id="rwTabPolicy" data-tab="policy" aria-selected="false" aria-controls="rwPanePolicy" data-i18n="research.tab_policy">政策仿真与优化</button>
       <button type="button" class="rw-tab" role="tab" id="rwTabReplication" data-tab="replication" aria-selected="false" aria-controls="rwPaneReplication" data-i18n="research.tab_replication">社会调查/实验拟合度</button>
       <button type="button" class="rw-tab" role="tab" id="rwTabWorlds" data-tab="worlds" aria-selected="false" aria-controls="rwPaneWorlds" data-i18n="research.tab_worlds">平行世界 · 反事实推断</button>
-      <button type="button" class="rw-tab" role="tab" id="rwTabMcf" data-tab="mcf" aria-selected="false" aria-controls="rwPaneMcf">MCF 工作流</button>
+      <button type="button" class="rw-tab" role="tab" id="rwTabMcf" data-tab="mcf" aria-selected="false" aria-controls="rwPaneMcf" data-i18n="mcf.tab">MCF 工作流</button>
       <button type="button" class="rw-tab" role="tab" id="rwTabOrganizationIntelligence" data-tab="organization-intelligence" aria-selected="false" aria-controls="rwPaneOrganizationIntelligence" data-i18n="oi3.tab">组织智能</button>
     </nav>
 
@@ -547,95 +548,239 @@
       </footer>
     </section>
 
-    <!-- ============ MCF 研究工作流 ============ -->
+    <!-- ============ MCF — Model capacity frontier (researcher UI) ============ -->
     <section class="studio-main rw-main" id="rwPaneMcf" role="tabpanel" aria-labelledby="rwTabMcf" hidden>
-      <div class="pw-grid2" style="align-items:start">
-        <!-- 左：实验清单与新建 -->
-        <aside class="rw-column">
-          <div class="pw-card">
-            <div class="pw-card-head">
-              <h2>MCF 实验</h2>
-              <div class="pw-chart-tools">
-                <select id="mcfHistory" aria-label="历史实验"></select>
-                <button class="button subtle" id="mcfRefresh" type="button">刷新</button>
+      <div class="mcf4-page">
+
+        <header class="mcf4-header">
+          <h1 data-i18n="mcf4.title">Model capacity frontier</h1>
+          <p data-i18n="mcf4.subtitle">Compare how closely different simulation designs can reproduce observations, after exploring the parameter settings available to each.</p>
+        </header>
+
+        <!-- ======== A. Experiment library (wizard is a mode of this page) ======== -->
+        <div id="mcf4Library">
+          <div id="mcf4Wizard" hidden>
+            <div class="mcf4-card">
+              <div class="mcf4-steps" id="mcf4StepBar">
+                <span class="mcf4-step is-active" data-wstep="1"><b>1</b> <span data-i18n="mcf4.s1">Study &amp; evidence</span></span>
+                <span class="mcf4-step" data-wstep="2"><b>2</b> <span data-i18n="mcf4.s2">Compare designs</span></span>
+                <span class="mcf4-step" data-wstep="3"><b>3</b> <span data-i18n="mcf4.s3">Explore parameters</span></span>
+                <span class="mcf4-step" data-wstep="4"><b>4</b> <span data-i18n="mcf4.s4">Review &amp; save</span></span>
               </div>
-            </div>
-            <p class="rw-hint">多配置前沿（MCF）：让几种行为架构扫过同一组可调参数带，
-              用真实的耗时结构误差向量比较它们的可达前沿。数据只来自实际跑完的仿真腿。</p>
-          </div>
 
-          <div class="pw-card">
-            <div class="pw-card-head"><h2>新建实验</h2></div>
-            <div class="pw-fields">
-              <label>实验名称<input id="mcfName" type="text" placeholder="例如：真实感规则是否扩大可达前沿" /></label>
-              <label>架构 M0（基线）标签<input id="mcfLabel0" type="text" value="M0 基线" /></label>
-              <label>M0 配置补丁（JSON，点路径 → 值）<textarea id="mcfPatch0" rows="2">{}</textarea></label>
-              <label>架构 M1 标签<input id="mcfLabel1" type="text" value="M1 真实感" /></label>
-              <label>M1 配置补丁（JSON）<textarea id="mcfPatch1" rows="2">{"personality.channels.rules": true}</textarea></label>
-              <p class="pw-hint">架构补丁只允许机制级开关；数值参数属于下方参数带</p>
-              <fieldset><legend>扫描的参数带（范围与出处见下表）</legend><div id="mcfParamChecks"></div></fieldset>
-              <label>采样方式
-                <select id="mcfSampler">
-                  <option value="endpoints">端点采样（每带取低/高）</option>
-                  <option value="sobol">Sobol</option>
-                </select>
-              </label>
-              <label>配置数（每架构）<input id="mcfNConfigs" type="number" min="1" max="64" value="2" /></label>
-              <label>种子数<input id="mcfNSeeds" type="number" min="1" max="32" value="1" /></label>
-              <label>种子列表（逗号分隔，留空自动）<input id="mcfSeeds" type="text" placeholder="7, 11" /></label>
-              <label>每腿预算：调用上限<input id="mcfMaxCalls" type="number" min="1" value="21000" /></label>
-              <label>每腿预算：token 上限<input id="mcfMaxTokens" type="number" min="1" value="11000000" /></label>
-              <label>每腿预算：秒上限<input id="mcfMaxElapsed" type="number" min="1" value="80000" /></label>
-            </div>
-            <div class="pw-chart-tools"><button class="button primary" id="mcfCreate" type="button">创建实验（不运行）</button></div>
-            <details><summary>可调参数带（边界与出处）</summary><div class="pw-table" id="mcfBands"></div></details>
-            <div class="rw-hint" id="mcfFormError"></div>
-          </div>
-        </aside>
+              <section class="mcf4-wpane" data-wpane="1">
+                <h2 data-i18n="mcf4.w1h">What population will you simulate, and what will count as a good match?</h2>
+                <div class="mcf4-field">
+                  <label for="mcf4Name"><span data-i18n="mcf4.f_name">Experiment name</span> <em data-i18n="mcf4.required">required</em></label>
+                  <input id="mcf4Name" type="text" placeholder="e.g. Does personality-rule influence improve time-use fit?" />
+                  <div class="mcf4-error" data-err="mcf4Name"></div>
+                </div>
+                <div class="mcf4-field">
+                  <label for="mcf4Note"><span data-i18n="mcf4.f_note">Research note (optional)</span></label>
+                  <textarea id="mcf4Note" rows="3"></textarea>
+                </div>
+                <div class="mcf4-field">
+                  <label for="mcf4CitySel"><span data-i18n="mcf5.f_city">GAWorld city</span> <em data-i18n="mcf4.required">required</em></label>
+                  <select id="mcf4CitySel"><option value="" data-i18n="mcf5.city_loading">Loading city catalogue…</option></select>
+                  <div class="mcf4-explain" id="mcf4CityCount"></div>
+                  <div class="mcf4-error" data-err="mcf4CitySel"></div>
+                </div>
+                <div class="mcf4-field">
+                  <label><span data-i18n="mcf5.f_population">Population selection</span> <em data-i18n="mcf4.required">required</em></label>
+                  <div class="mcf4-methodrow" id="mcf4MethodRow">
+                    <label class="mcf4-checkline"><input type="radio" name="mcf4Method" value="manual" checked /> <span data-i18n="mcf5.m_manual">Manual selection</span></label>
+                    <label class="mcf4-checkline"><input type="radio" name="mcf4Method" value="random" /> <span data-i18n="mcf5.m_random">Random sample</span></label>
+                    <label class="mcf4-checkline"><input type="radio" name="mcf4Method" value="all" /> <span data-i18n="mcf5.m_all">Entire population</span></label>
+                  </div>
+                  <div id="mcf4MethodManual">
+                    <input id="mcf4AgSearch" type="search" data-i18n-placeholder="mcf4.search_agents" placeholder="Search residents…" />
+                    <div id="mcf4AgentList" class="mcf4-agentlist"></div>
+                    <div class="mcf4-footbtns mcf4-pagerow">
+                      <button class="button subtle" id="mcf4AgPrev" type="button" data-i18n="mcf5.prev_page">Previous</button>
+                      <span class="mcf4-meta" id="mcf4AgPageInfo"></span>
+                      <button class="button subtle" id="mcf4AgNext" type="button" data-i18n="mcf5.next_page">Next</button>
+                    </div>
+                    <div class="mcf4-explain" id="mcf4SelCount"></div>
+                  </div>
+                  <div id="mcf4MethodRandom" hidden>
+                    <div class="mcf4-fieldrow">
+                      <div class="mcf4-field"><label for="mcf4SampleSize"><span data-i18n="mcf5.sample_size">Sample size</span></label><input id="mcf4SampleSize" type="number" min="1" value="20" /></div>
+                      <div class="mcf4-field"><label for="mcf4SampleSeed"><span data-i18n="mcf5.sample_seed">Random seed</span></label><input id="mcf4SampleSeed" type="number" min="0" value="42" /></div>
+                    </div>
+                    <button class="button subtle" id="mcf4PreviewBtn" type="button" data-i18n="mcf5.preview">Preview sample</button>
+                    <div class="mcf4-explain" id="mcf4RandomInfo"></div>
+                  </div>
+                  <div id="mcf4MethodAll" hidden>
+                    <div class="mcf4-banner mcf4-banner-warn" id="mcf4AllWarn"></div>
+                  </div>
+                  <div class="mcf4-explain" id="mcf4EmployedLine"></div>
+                  <div class="mcf4-error" data-err="mcf4Population"></div>
+                </div>
+                <div class="mcf4-field">
+                  <label for="mcf4Days"><span data-i18n="mcf5.f_days">Simulation duration (days)</span> <em data-i18n="mcf4.required">required</em></label>
+                  <input id="mcf4Days" type="number" min="1" step="1" value="7" />
+                  <div class="mcf4-explain" id="mcf4DaysNote"></div>
+                  <div class="mcf4-error" data-err="mcf4Days"></div>
+                </div>
+                <div class="mcf4-field">
+                  <label><span data-i18n="mcf4.f_reference">Empirical reference</span></label>
+                  <div class="mcf4-staticrow" id="mcf4ReferenceRow"></div>
+                  <div class="mcf4-explain" id="mcf4PopNote"></div>
+                </div>
+                <div class="mcf4-field">
+                  <label><span data-i18n="mcf4.f_objectives">Evaluation objectives</span> <em data-i18n="mcf4.fixed_by_scorer">fixed by the current scorer</em></label>
+                  <div id="mcf4Objectives"></div>
+                </div>
+                <div class="mcf4-outlook" id="mcf4Outlook"></div>
+              </section>
+              <section class="mcf4-wpane" data-wpane="2" hidden>
+                <h2 data-i18n="mcf4.w2h">What mechanism do you want to change?</h2>
+                <p class="mcf4-explain" data-i18n="mcf4.w2same">Both designs use the same city, population, objectives, parameter ranges, and matched seeds. Only the selected mechanism differs.</p>
+                <div class="mcf4-archgrid">
+                  <div class="mcf4-archcard is-ref">
+                    <h3><span data-i18n="mcf4.design_word">Design</span> M0 · <span data-i18n="mcf4.mech_rules_on">Personality rules ON</span> · <span data-i18n="mcf4.reference_word">reference</span></h3>
+                    <label for="mcf4Label0"><span data-i18n="mcf4.display_name">Display name</span></label>
+                    <input id="mcf4Label0" type="text" value="Rules on (M0)" />
+                    <div class="mcf4-mechcard">
+                      <strong data-i18n="mcf4.mech_name">Personality-rule influence</strong>
+                      <div class="mcf4-mechstate" data-i18n="mcf4.state_on">ON — baseline</div>
+                    </div>
+                    <details class="mcf4-advanced"><summary data-i18n="mcf4.adv_patch">Advanced — custom mechanism overrides (JSON)</summary>
+                      <label for="mcf4Patch0">M0 patch (JSON)</label>
+                      <textarea id="mcf4Patch0" rows="3">{}</textarea>
+                      <div class="mcf4-error" data-err="mcf4Patch0"></div>
+                    </details>
+                  </div>
+                  <div class="mcf4-archcard">
+                    <h3><span data-i18n="mcf4.design_word">Design</span> M1 · <span data-i18n="mcf4.mech_rules_off">Personality rules OFF</span> · <span data-i18n="mcf4.comparison_word">comparison</span></h3>
+                    <label for="mcf4Label1"><span data-i18n="mcf4.display_name">Display name</span></label>
+                    <input id="mcf4Label1" type="text" value="Rules off (M1)" />
+                    <div class="mcf4-mechcard">
+                      <strong data-i18n="mcf4.mech_name">Personality-rule influence</strong>
+                      <div class="mcf4-mechstate" data-i18n="mcf4.state_off">OFF — the mechanism difference being tested</div>
+                    </div>
+                    <details class="mcf4-advanced"><summary data-i18n="mcf4.adv_patch">Advanced — custom mechanism overrides (JSON)</summary>
+                      <label for="mcf4Patch1">M1 patch (JSON)</label>
+                      <textarea id="mcf4Patch1" rows="3">{"personality.channels.rules": false}</textarea>
+                      <div class="mcf4-error" data-err="mcf4Patch1"></div>
+                    </details>
+                  </div>
+                </div>
+                <p class="mcf4-explain" data-i18n="mcf4.arch_vs_param">Changing the design alters a simulation mechanism. Changing a parameter value is not a design change — parameter settings are sampled identically for both designs in the next step.</p>
+              </section>
 
-        <!-- 右：运行与结果 -->
-        <section class="pw-observe">
-          <div class="pw-card">
-            <div class="pw-card-head">
-              <h2>运行与进度</h2>
-              <div class="pw-chart-tools">
-                <label class="pw-check"><input type="checkbox" id="mcfConfirmCost" /> 确认成本（估计调用超阈值时必勾）</label>
-                <button class="button primary" id="mcfLaunch" type="button" disabled>启动实验</button>
-              </div>
-            </div>
-            <div class="pw-readout" id="mcfProgress">没有选中的实验。</div>
-          </div>
+              <section class="mcf4-wpane" data-wpane="3" hidden>
+                <h2 data-i18n="mcf4.w3h">Which parameter settings should each design try?</h2>
+                <div id="mcf4Bands"></div>
+                <div class="mcf4-fieldrow">
+                  <div class="mcf4-field">
+                    <label for="mcf4Sampler"><span data-i18n="mcf4.f_sampler">Sampling method</span></label>
+                    <select id="mcf4Sampler">
+                      <option value="endpoints" data-i18n="mcf4.sampler_endpoints">Band endpoints</option>
+                      <option value="sobol">Sobol sequence</option>
+                    </select>
+                  </div>
+                  <div class="mcf4-field">
+                    <label for="mcf4NConfigs"><span data-i18n="mcf4.f_nconfigs">Configurations per design</span></label>
+                    <input id="mcf4NConfigs" type="number" min="1" max="64" value="2" />
+                  </div>
+                  <div class="mcf4-field">
+                    <label for="mcf4Seeds"><span data-i18n="mcf4.f_seeds">Independent seeds</span></label>
+                    <input id="mcf4Seeds" type="text" value="7, 13" />
+                    <div class="mcf4-error" data-err="mcf4Seeds"></div>
+                  </div>
+                </div>
+                <p class="mcf4-runs">2 × <b id="mcf4NcEcho">2</b> × <b id="mcf4NsEcho">2</b> = <b id="mcf4Runs">8</b> <span data-i18n="mcf4.legs_word">simulation legs</span></p>
+                <p class="mcf4-explain" data-i18n="mcf4.seed_explain">A seed repeats the simulation with different randomness, allowing us to check whether a result is stable. Both designs use the same parameter settings and the same seed list.</p>
+              </section>
 
-          <div class="pw-card">
-            <div class="pw-card-head">
-              <h2>帕累托前沿（误差向量，越低越好）</h2>
-            </div>
-            <div class="pw-svgwrap" id="mcfPareto"></div>
-            <div class="pw-readout" id="mcfParetoNote"></div>
-          </div>
+              <section class="mcf4-wpane" data-wpane="4" hidden>
+                <h2 data-i18n="mcf4.w4h">Review your study before saving.</h2>
+                <div id="mcf4Review"></div>
+                <div class="mcf4-outlook" id="mcf4Workload"></div>
+                <div class="mcf4-banner mcf4-banner-info" id="mcf4PaidNote" hidden></div>
+                <div class="mcf4-banner mcf4-banner-warn" id="mcf4ExploratoryTag" hidden></div>
+              </section>
 
-          <div class="pw-card">
-            <div class="pw-card-head"><h2>逐配置结果（跨种子均值）</h2></div>
-            <div class="pw-table" id="mcfTable"></div>
-          </div>
-
-          <div class="pw-grid2">
-            <div class="pw-card">
-              <div class="pw-card-head"><h2>诊断</h2></div>
-              <div class="pw-table" id="mcfDiagnostics"></div>
-            </div>
-            <div class="pw-card">
-              <div class="pw-card-head">
-                <h2>导出</h2>
-                <div class="pw-chart-tools">
-                  <button class="button subtle" id="mcfReport" type="button">生成报告</button>
-                  <button class="button subtle" id="mcfExport" type="button">下载 JSON</button>
+              <div class="mcf4-foot">
+                <div class="mcf4-error" id="mcf4FormError"></div>
+                <div class="mcf4-footbtns">
+                  <button class="button subtle" id="mcf4Cancel" type="button" data-i18n="mcf4.cancel">Cancel</button>
+                  <button class="button subtle" id="mcf4Back" type="button" hidden data-i18n="mcf4.back">Back</button>
+                  <button class="button primary" id="mcf4Next" type="button" data-i18n="mcf4.next">Next</button>
+                  <button class="button primary" id="mcf4Save" type="button" hidden data-i18n="mcf4.save">Save experiment (do not run)</button>
                 </div>
               </div>
-              <pre id="mcfReportOut" class="rw-hint" style="white-space:pre-wrap"></pre>
             </div>
           </div>
-        </section>
+
+          <div id="mcf4LibBody">
+            <div class="mcf4-toolbar">
+              <div class="mcf4-filters" role="tablist" id="mcf4Filters">
+                <button class="is-active" data-filter="all" type="button" data-i18n="mcf4.flt_all">All</button>
+                <button data-filter="draft" type="button" data-i18n="mcf4.flt_draft">Draft</button>
+                <button data-filter="running" type="button" data-i18n="mcf4.flt_running">In progress</button>
+                <button data-filter="results" type="button" data-i18n="mcf4.flt_results">Has results</button>
+                <button data-filter="attention" type="button" data-i18n="mcf4.flt_attention">Needs attention</button>
+              </div>
+              <div class="mcf4-toolright">
+                <input id="mcf4Search" type="search" data-i18n-placeholder="mcf4.search_ph" placeholder="Search experiments…" aria-label="Search experiments" />
+                <button class="button subtle" id="mcf4Refresh" type="button" data-i18n="mcf4.refresh">Refresh</button>
+                <button class="button primary" id="mcf4NewBtn" type="button" data-i18n="mcf4.new_exp">New experiment</button>
+              </div>
+            </div>
+            <div class="mcf4-cardgrid" id="mcf4Grid"></div>
+            <div class="mcf4-empty" id="mcf4Empty"></div>
+          </div>
+        </div>
+
+        <!-- ======== B. Experiment workspace ======== -->
+        <div id="mcf4Ws" hidden>
+          <div class="mcf4-crumbrow">
+            <button class="mcf4-linkish" id="mcf4Crumb" type="button" data-i18n="mcf4.all_experiments">All experiments</button>
+            <h2 id="mcf4WsTitle"></h2>
+            <button class="button subtle" id="mcf4WsRefresh" type="button" data-i18n="mcf4.refresh">Refresh</button>
+          </div>
+          <p class="mcf4-metaline" id="mcf4MetaLine"></p>
+          <div class="mcf4-evidence" id="mcf4Evidence"></div>
+          <div class="mcf4-wstabs" role="tablist" id="mcf4Tabs">
+            <button type="button" data-tab="overview" class="is-active" data-i18n="mcf4.t_overview">Overview</button>
+            <button type="button" data-tab="results" data-i18n="mcf4.t_results">Results</button>
+            <button type="button" data-tab="design" data-i18n="mcf4.t_design">Design</button>
+            <button type="button" data-tab="runs" data-i18n="mcf4.t_runs">Runs &amp; costs</button>
+            <button type="button" data-tab="diag" data-i18n="mcf4.t_diag">Diagnostics &amp; export</button>
+          </div>
+
+          <section class="mcf4-wstab" data-tab="overview" id="mcf4Overview"></section>
+          <section class="mcf4-wstab" data-tab="results" hidden>
+            <div class="mcf4-card">
+              <h2 data-i18n="mcf4.chart_h">Which combinations of empirical fit can each design achieve?</h2>
+              <p class="mcf4-explain" data-i18n="mcf4.chart_sub">Each point is one parameter setting, averaged over available seeds. Farther left and lower means closer to observed data.</p>
+              <div id="mcf4ObjPickers" class="mcf4-objpickers" hidden>
+                <label><span data-i18n="mcf4.x_obj">X objective</span> <select id="mcf4XSel"></select></label>
+                <label><span data-i18n="mcf4.y_obj">Y objective</span> <select id="mcf4YSel"></select></label>
+              </div>
+              <div id="mcf4Chart" class="mcf4-chart"></div>
+              <div class="mcf4-legend" id="mcf4Legend"></div>
+              <p class="mcf4-explain" data-i18n="mcf4.frontier_explain">The frontier is the set of explored parameter settings for which no other setting in the same design has lower error on every measured outcome. A newly attainable point is not matched or beaten across all objectives by the other design's explored settings. These are statements about the configurations tested, not proof that one design is universally better.</p>
+              <div id="mcf4AllObjNote" class="mcf4-allobj" hidden></div>
+            </div>
+            <div class="mcf4-card">
+              <h2 data-i18n="mcf4.matched_h">What changes when only the mechanism changes?</h2>
+              <p class="mcf4-explain" data-i18n="mcf4.matched_sub">Same parameter setting, matched seeds. Negative change means the rules-off design has lower error; positive change means higher error.</p>
+              <div id="mcf4Matched"></div>
+              <p class="mcf4-explain" data-i18n="mcf4.matched_note">A lower error is better. These differences are descriptive because the runs stopped early and seed variability is substantial.</p>
+            </div>
+            <div class="mcf4-card">
+              <h2 data-i18n="mcf4.allsettings_h">All parameter settings</h2>
+              <div id="mcf4AllSettings"></div>
+            </div>
+          </section>
+          <section class="mcf4-wstab" data-tab="design" hidden id="mcf4Design"></section>
+          <section class="mcf4-wstab" data-tab="runs" hidden id="mcf4RunsPane"></section>
+          <section class="mcf4-wstab" data-tab="diag" hidden id="mcf4DiagPane"></section>
+        </div>
+
       </div>
     </section>
   </main>

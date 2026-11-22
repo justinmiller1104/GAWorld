@@ -98,7 +98,7 @@ def _clock(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-def stub_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> dict[str, Any]:
+def stub_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim_context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Deterministic offline leg: episode-span files whose time use is a pure
     function of the flattened config patch, scored by the real scorer.
 
@@ -141,16 +141,31 @@ def stub_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) ->
     }
 
 
-def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> dict[str, Any]:
+def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim_context: dict[str, Any] | None = None) -> dict[str, Any]:
     """The REAL execution vehicle: apply the nested config patch to the live
     CONFIG, seed it through the only wired mechanism
     (``CONFIG["random_seed"]``), snapshot the config into the run dir, and run
     the actual simulator entry module — the same launch path
-    ``launch.run_canary_simulation`` uses."""
+    ``launch.run_canary_simulation`` uses.
+
+    ``sim_context`` (population integration): ``city`` / ``csv_path`` /
+    ``map_path`` overrides + ``agent_ids`` + ``sim_days`` from the resolved
+    experiment population. These are the exact CONFIG keys the simulator
+    consumes (``AGENT_IDS`` / ``SIM_DAYS`` / ``CSV_PATH`` are module-level
+    bindings derived from CONFIG at import time), so after the entry module is
+    imported the corresponding module globals are rebound for the duration of
+    the leg — the same rebinding pattern the call_llm wrapper already uses —
+    and restored afterwards."""
     from gaworld.settings import CONFIG
     import gaworld.llm.providers as providers
 
     original = {key: json.loads(json.dumps(CONFIG.get(key))) for key in config}
+    sim_original: dict[str, Any] = {}
+    if sim_context:
+        for key in ("city", "csv_path", "map_path", "real_map_path", "md_path", "agent_ids", "sim_days"):
+            if key in sim_context:
+                sim_original[key] = json.loads(json.dumps(CONFIG.get(key)))
+                CONFIG[key] = json.loads(json.dumps(sim_context[key]))
     original_seed = CONFIG.get("random_seed")
     try:
         for key, value in config.items():
@@ -183,13 +198,54 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> 
         original_realism_llm = _realism.__dict__.get("call_llm")
         generative_city_sim.call_llm = providers.call_llm
         _realism.call_llm = providers.call_llm
+        # population integration: the module bound AGENT_IDS / SIM_DAYS /
+        # CSV_PATH / MAP_PATH from CONFIG at import time; rebind them from this
+        # leg's sim context so the engine simulates exactly the selected city,
+        # residents and duration (restored after the leg, like call_llm).
+        sim_globals_original: dict[str, Any] = {}
+        if sim_context:
+            for gname, ckey in (
+                ("_BASE_AGENT_IDS", "agent_ids"),
+                ("AGENT_IDS", "agent_ids"),
+                ("SIM_DAYS", "sim_days"),
+                ("CSV_PATH", "csv_path"),
+                ("MAP_PATH", "map_path"),
+                ("REAL_MAP_PATH", "real_map_path"),
+            ):
+                if gname in generative_city_sim.__dict__:
+                    sim_globals_original[gname] = generative_city_sim.__dict__[gname]
+                    value = sim_context.get(ckey)
+                    if ckey == "agent_ids":
+                        value = [int(i) for i in (value or [])]
+                    elif ckey == "sim_days":
+                        value = int(value)
+                    generative_city_sim.__dict__[gname] = value
         try:
+            if sim_context:
+                run_manifest_event = (generative_city_sim.__dict__.get("AGENT_IDS"), generative_city_sim.__dict__.get("SIM_DAYS"))
+                (Path(run_dir) / "population_applied.json").write_text(
+                    json.dumps({
+                        "agent_ids": list(sim_context.get("agent_ids") or []),
+                        "n_agents": len(sim_context.get("agent_ids") or []),
+                        "sim_days": sim_context.get("sim_days"),
+                        "city": sim_context.get("city"),
+                        "csv_path": sim_context.get("csv_path"),
+                        "provenance": sim_context.get("population_provenance") or {},
+                        "module_bindings_seen": {
+                            "AGENT_IDS": list(run_manifest_event[0] or []),
+                            "SIM_DAYS": run_manifest_event[1],
+                        },
+                    }, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
             generative_city_sim.run_simulation()
         finally:
             if original_sim_llm is not None:
                 generative_city_sim.call_llm = original_sim_llm
             if original_realism_llm is not None:
                 _realism.call_llm = original_realism_llm
+            for gname, value in sim_globals_original.items():
+                generative_city_sim.__dict__[gname] = value
     finally:
         for key, value in original.items():
             if value is None:
@@ -204,7 +260,14 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> 
             CONFIG.pop("random_seed", None)
         else:
             CONFIG["random_seed"] = original_seed
-    return {"ok": True, "usage": {}, "episodes_dir": str(run_dir)}
+        for key, value in sim_original.items():
+            if value is None:
+                CONFIG.pop(key, None)
+            else:
+                CONFIG[key] = value
+    return {"ok": True, "usage": {}, "episodes_dir": str(run_dir),
+            "agents": len((sim_context or {}).get("agent_ids") or []),
+            "days": (sim_context or {}).get("sim_days")}
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +281,7 @@ def make_leg_harness(
     stub: bool | None = None,
     model_info: dict[str, Any] | None = None,
     execute: Execute | None = None,
+    sim_context: dict[str, Any] | None = None,
 ) -> Execute:
     """Build a ``run_legs``-compatible harness ``(config, run_dir, *, seed)``.
 
@@ -243,10 +307,20 @@ def make_leg_harness(
         pricing=pricing, **{k: leg_limits[k] for k in _LIMIT_KEYS if k in leg_limits}
     )
 
+    vehicle_kwargs: dict[str, Any] = {}
+    if sim_context is not None:
+        vehicle_kwargs["sim_context"] = sim_context
+
     def harness(config: dict[str, Any], run_dir: Path, *, seed: int = 0) -> dict[str, Any]:
+        create_cfg = {"seed": seed, "config_patch": _flatten(config), "model": dict(model_info or {})}
+        if sim_context is not None:
+            create_cfg["population"] = dict(sim_context.get("population_provenance") or {}) | {
+                "n_agents": len(sim_context.get("agent_ids") or []),
+                "sim_days": sim_context.get("sim_days"),
+            }
         run_ctx = create_run(
             run_dir,
-            config={"seed": seed, "config_patch": _flatten(config), "model": dict(model_info or {})},
+            config=create_cfg,
         )
         import gaworld.llm.providers as providers
 
@@ -265,7 +339,7 @@ def make_leg_harness(
             error_msg = ""
             result: dict[str, Any] = {}
             try:
-                result = dict(vehicle(config, handle.run_dir, seed=seed) or {})
+                result = dict(vehicle(config, handle.run_dir, seed=seed, **vehicle_kwargs) or {})
             except CanaryExceeded as exc:
                 # budget kill: honest stop reason, usage from the frozen ledger
                 outcome = "interrupted"

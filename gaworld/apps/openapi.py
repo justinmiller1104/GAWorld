@@ -1814,7 +1814,7 @@ def _mcf() -> dict[str, Any]:
     )
     return {
         "/api/mcf/meta": {"get": _op(
-            "mcf", "Researcher-facing MCF metadata: gates, empirical targets, objective labels",
+            "mcf", "Researcher-facing MCF metadata: gates, empirical targets, objective labels. benchmark/mcf is repository-checkout-only (not in installed wheels); endpoints return 501 in installed distributions",
             ok=_obj(("gates", "targets", "objectives", "runner_capabilities"),
                     gates=_d(OBJ, "min_comparison_days / min_comparison_population"),
                     targets=_d(OBJ, "time-use survey provenance and per-category minutes"),

@@ -1240,6 +1240,11 @@ def _apply_interrupt_cooldown(
         agent_key = agent.get("id") if agent.get("id") is not None else agent.get("agent_id")
     if agent_key is None:
         return candidates
+    # Cooldown bookkeeping is part of the MCF realism engine; keep default
+    # (gate-off) runs identical to upstream, which never suppressed repeat
+    # interrupts.
+    if not mcf_realism_enabled():
+        return candidates
     records = _ACTIVE_INTERRUPTS.get(agent_key)
     if not records:
         return candidates

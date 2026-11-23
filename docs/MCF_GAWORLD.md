@@ -378,8 +378,7 @@ blocking mode; streaming responses do not unless `stream_options:
 {"include_usage": true}` is requested (NOT enabled — it would change
 production behaviour). GAWorld's provider wrapper returns only the text, so
 the raw usage was previously DISCARDED: every token figure in the canary14
-manifests (`output/canary/`, `/home/justin/Documents/gaworld-agent-work/
-canary14/`) is the conservative 400-token/call ESTIMATE, never observed —
+manifests (`output/canary/`, `~/gaworld-agent-work/canary14/`) is the conservative 400-token/call ESTIMATE, never observed —
 40 calls × 500? or 280 × 400 = 112,000 etc. are all estimate-derived.
 
 As of Phase 1.5 Track 2 the provider stashes the blocking response's
@@ -459,7 +458,7 @@ manufactured two-axis frontier.
 ## 6. Key evidence & provenance
 
 External archive (authoritative preserved copies):
-**`/home/justin/Documents/gaworld-agent-work/mcf-archive/`** (external workspace,
+**`~/gaworld-agent-work/mcf-archive/`** (external workspace,
 outside the repo — created by the Phase 1.1 cleanup; see the workspace's
 `cleanup-inventory/change-log.md`).
 
@@ -499,9 +498,16 @@ predecessor; 0.5–0.8 surviving content is restated in 0.9/1.0 above.
 
 ---
 
-*Consolidated by the Phase 1.1 cleanup task (TASK-3232) from the six phase docs,
-REPO_HYGIENE_AUDIT.md, and research RESULTs 3170/3171/3176/3187/3188/3192/3201/
+*Consolidated by the Phase 1.1 cleanup task (TASK-3232) from the six phase docs
+and research RESULTs 3170/3171/3176/3187/3188/3192/3201/
 3206/3217. No code, tests, or default-run behaviour were changed by this doc.*
+
+## 7.1 Packaging: repository-only research functionality
+
+`benchmark/mcf` ships only in a repository checkout — `pyproject.toml` packages
+just `gaworld*`, so installed wheels contain **no** MCF code and the MCF HTTP
+endpoints answer **HTTP 501** ("…not importable in this build") in installed
+distributions. Run MCF experiments from a repo checkout.
 
 ## 8. Intervention testing framework (Phase 2.2)
 

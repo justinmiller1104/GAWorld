@@ -247,7 +247,7 @@ fos/test_results/
 /test_results/
 /data/gaworld_runs/
 
-# Phase 1.1 hygiene: generated outputs & agent scratch (see docs/MCF_GAWORLD.md + REPO_HYGIENE_AUDIT.md)
+# Phase 1.1 hygiene: generated outputs & agent scratch (see docs/MCF_GAWORLD.md)
 /outputs/
 /docs/proposals/results/
 TASK-*.progress

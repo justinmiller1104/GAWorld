@@ -228,7 +228,10 @@ def _candidate() -> InterruptCandidate:
     )
 
 
-def test_h5_cooldown_suppresses_for_pipeline_shaped_agent():
+def test_h5_cooldown_suppresses_for_pipeline_shaped_agent(monkeypatch):
+    # The cooldown is part of the gated realism engine; the gate-off default
+    # never suppresses (upstream behaviour). Exercise the gate-on contract.
+    monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
     _ACTIVE_INTERRUPTS.clear()
     try:
         # A recorded interrupt for this agent - registered under the agent's

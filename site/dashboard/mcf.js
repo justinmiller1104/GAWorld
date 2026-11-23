@@ -952,7 +952,8 @@
   async function loadBandsAndMeta() {
     try {
       var mb = await api("/api/mcf/meta");
-      state.meta = mb;
+      // Incomplete meta ({}) must fall back to null so render guards hold.
+      state.meta = (mb && mb.targets && mb.objectives && mb.gates) ? mb : null;
     } catch (e) { state.meta = null; }
     try {
       var bb = await api("/api/mcf/bands");

@@ -8,6 +8,9 @@ global rebinding, restore) is the real production code.
 """
 
 import json
+import os
+
+import pytest
 
 from benchmark.mcf.population import (
     city_roster,
@@ -283,6 +286,8 @@ def test_invalid_inputs_rejected():
 
 def test_historical_experiments_untouched(tmp_path, monkeypatch):
     monkeypatch.setattr(mcf_api, "_mcf_root", lambda: str(tmp_path / "mcf"))
+    if not os.path.exists("output/mcf/phase5-final/experiment.json"):
+        pytest.skip("local historical artifact output/mcf/phase5-final/experiment.json not present")
     with open("output/mcf/phase5-final/experiment.json", encoding="utf-8") as fh:
         exp = json.load(fh)
     assert "population" not in exp and "sim_days" not in exp

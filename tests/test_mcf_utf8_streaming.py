@@ -175,16 +175,14 @@ class TestOpenAIStreamingUtf8(unittest.TestCase):
     def test_chinese_text_decodes_correctly(self):
         provider = _make_openai_provider(stream=True)
         response = _sse(_openai_stream_frames(CHINESE_TEXT))
-        with mock.patch("gaworld.llm.providers.requests.post", return_value=response):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=response):
             result = provider.call("hi")
         self.assertIn(CHINESE_TEXT, result, f"streamed Chinese text arrived as mojibake: {result!r}")
 
     def test_chinese_json_keys_match_after_action_parser(self):
         text = json.dumps({ACTIVITIES[0]: ["在屋檐下躲雨"], ACTIVITIES[1]: ["躲进凉亭"]}, ensure_ascii=False)
         provider = _make_openai_provider(stream=True)
-        with mock.patch(
-            "gaworld.llm.providers.requests.post", return_value=_sse(_openai_stream_frames(text))
-        ):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=_sse(_openai_stream_frames(text))):
             result = provider.call("hi")
         parsed = _parse_action_space(result, ACTIVITIES)
         self.assertEqual(set(parsed.keys()), set(ACTIVITIES), f"mojibake keys failed exact-match: {parsed!r}")
@@ -195,7 +193,7 @@ class TestOpenAIStreamingUtf8(unittest.TestCase):
         provider = _make_openai_provider(stream=True)
         # 3-byte cuts slice straight through the 3-byte CJK codepoints.
         with mock.patch(
-            "gaworld.llm.providers.requests.post",
+            "gaworld.llm.providers.http_post",
             return_value=_sse(_openai_stream_frames(text), split_every=3),
         ):
             result = provider.call("hi")
@@ -207,27 +205,23 @@ class TestOpenAIStreamingUtf8(unittest.TestCase):
         blocking = _make_openai_provider(stream=False)
         streaming = _make_openai_provider(stream=True)
         payload = {"choices": [{"message": {"content": text}, "finish_reason": "stop"}]}
-        with mock.patch("gaworld.llm.providers.requests.post", return_value=_blocking_response(payload)):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=_blocking_response(payload)):
             blocking_text = blocking.call("hi")
-        with mock.patch(
-            "gaworld.llm.providers.requests.post", return_value=_sse(_openai_stream_frames(text))
-        ):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=_sse(_openai_stream_frames(text))):
             streaming_text = streaming.call("hi")
         self.assertEqual(blocking_text, streaming_text, "streaming decoded differently from blocking")
 
     def test_ascii_unchanged(self):
         text = '{"take shelter": ["stay under the eaves"]}'
         provider = _make_openai_provider(stream=True)
-        with mock.patch(
-            "gaworld.llm.providers.requests.post", return_value=_sse(_openai_stream_frames(text))
-        ):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=_sse(_openai_stream_frames(text))):
             result = provider.call("hi")
         self.assertEqual(text, result)
 
     def test_minimax_style_payload_decodes_chinese(self):
         provider = _make_openai_provider(stream=True)
         with mock.patch(
-            "gaworld.llm.providers.requests.post",
+            "gaworld.llm.providers.http_post",
             return_value=_sse(_openai_stream_frames(CHINESE_TEXT, style="minimax")),
         ):
             result = provider.call("hi")
@@ -245,7 +239,7 @@ class TestOpenAIStreamingUtf8(unittest.TestCase):
         raw = b"data: " + good_frame + b"\n\n" + bad_frame
         response = _FakeStreamResponse([raw], content_type="text/event-stream; charset=utf-8")
         provider = _make_openai_provider(stream=True)
-        with mock.patch("gaworld.llm.providers.requests.post", return_value=response):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=response):
             result = provider.call("hi")  # must not raise
         self.assertIn("OK", result)
         self.assertIn("\ufffd", result, "invalid bytes should surface as U+FFFD, not silently vanish")
@@ -257,7 +251,7 @@ class TestOllamaStreamingUtf8(unittest.TestCase):
     def test_chinese_text_decodes_correctly(self):
         provider = OllamaProvider("http://mock.invalid", "mock-model", attempts=1)
         response = _sse(_ollama_frames(CHINESE_TEXT), prefix="")
-        with mock.patch("gaworld.llm.providers.requests.post", return_value=response):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=response):
             result = provider.call("hi")
         self.assertIn(CHINESE_TEXT, result, f"streamed Chinese text arrived as mojibake: {result!r}")
 
@@ -265,7 +259,7 @@ class TestOllamaStreamingUtf8(unittest.TestCase):
         frames = _ollama_frames(CHINESE_TEXT + " 在屋檐下躲雨")
         provider = OllamaProvider("http://mock.invalid", "mock-model", attempts=1)
         with mock.patch(
-            "gaworld.llm.providers.requests.post",
+            "gaworld.llm.providers.http_post",
             return_value=_sse(frames, split_every=2, prefix=""),
         ):
             result = provider.call("hi")
@@ -278,14 +272,14 @@ class TestProviderCompatibilityUntouched(unittest.TestCase):
 
     Both wire styles keep flowing through the same ``call`` path; only the
     decode statements may change (patch exactness: these tests patch nothing
-    but ``requests.post``, so any wider change must still keep them green).
+    but the provider transport (``providers.http_post``), so any wider change must still keep them green).
     """
 
     def test_both_wire_styles_route_through_the_same_call(self):
         for style in ("openai", "minimax"):
             provider = _make_openai_provider(stream=True)
             with mock.patch(
-                "gaworld.llm.providers.requests.post",
+                "gaworld.llm.providers.http_post",
                 return_value=_sse(_openai_stream_frames(CHINESE_TEXT, style=style)),
             ) as post:
                 result = provider.call("hi")
@@ -300,7 +294,7 @@ class TestProviderCompatibilityUntouched(unittest.TestCase):
     def test_blocking_provider_still_reports_finish_reason_and_usage(self):
         provider = _make_openai_provider(stream=False)
         payload = {"choices": [{"message": {"content": CHINESE_TEXT}, "finish_reason": "stop"}]}
-        with mock.patch("gaworld.llm.providers.requests.post", return_value=_blocking_response(payload)):
+        with mock.patch("gaworld.llm.providers.http_post", return_value=_blocking_response(payload)):
             result = provider.call("hi")
         self.assertEqual(CHINESE_TEXT, result)
 

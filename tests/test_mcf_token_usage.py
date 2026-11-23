@@ -42,10 +42,10 @@ class TestProviderUsageStash(unittest.TestCase):
 
     def setUp(self):
         self.provider = providers.OpenAIProvider("https://example.invalid/v1", "m", api_key="k")
-        self._original_post = providers.requests.post
+        self._original_post = providers.http_post
 
     def tearDown(self):
-        providers.requests.post = self._original_post
+        providers.http_post = self._original_post
         providers.pop_last_token_usage()
 
     def _payload(self, usage):
@@ -56,13 +56,13 @@ class TestProviderUsageStash(unittest.TestCase):
 
     def test_usage_is_popped_once(self):
         usage = {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165}
-        providers.requests.post = lambda *a, **kw: _FakeResponse(self._payload(usage))
+        providers.http_post = lambda *a, **kw: _FakeResponse(self._payload(usage))
         self.provider.call("hi")
         self.assertEqual(providers.pop_last_token_usage(), usage)
         self.assertIsNone(providers.pop_last_token_usage(), "pop must clear the stash")
 
     def test_missing_usage_yields_none(self):
-        providers.requests.post = lambda *a, **kw: _FakeResponse(self._payload(None))
+        providers.http_post = lambda *a, **kw: _FakeResponse(self._payload(None))
         self.provider.call("hi")
         self.assertIsNone(providers.pop_last_token_usage())
 
@@ -70,7 +70,7 @@ class TestProviderUsageStash(unittest.TestCase):
         import threading
 
         usage = {"prompt_tokens": 10, "completion_tokens": 5}
-        providers.requests.post = lambda *a, **kw: _FakeResponse(self._payload(usage))
+        providers.http_post = lambda *a, **kw: _FakeResponse(self._payload(usage))
         self.provider.call("hi")
         seen = {}
         done = threading.Event()

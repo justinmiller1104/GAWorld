@@ -71,15 +71,10 @@ class CanaryBudget:
         self._frozen: dict[str, Any] | None = None
         self._started = time.monotonic()
         # Ride-along telemetry attached by the run installer (launch.py):
-        # latency samples and measured-vs-estimated token accounting live on
-        # the wrapper but are read back off the budget post-kill.
+        # latency samples live on the wrapper but are read back off the
+        # budget post-kill. token_accounting is likewise attached only when
+        # the installer ran; a budget without it must not report accounting.
         self.latencies: list[float] = []
-        self.token_accounting: dict[str, int] = {
-            "measured_calls": 0,
-            "estimated_calls": 0,
-            "tokens_measured": 0,
-            "tokens_estimated": 0,
-        }
 
     def freeze_usage(self) -> None:
         """Pin the current usage as final (post-kill manifest stability)."""

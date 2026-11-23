@@ -16,14 +16,11 @@ state by design. No LLM calls, no network, no simulation.
 
 from __future__ import annotations
 
-import pytest
-
 from benchmark.mcf.time_use import (
-    ObservedBreakdown,  # noqa: F401  (RED: missing API)
-    compute_observed_minutes,  # noqa: F401  (RED: missing API)
-    coverage_breakdown,  # noqa: F401  (RED: missing API)
+    ObservedBreakdown,
+    compute_observed_minutes,
+    coverage_breakdown,
 )
-
 
 TICK = 10
 
@@ -182,6 +179,5 @@ def test_partial_window_sums_to_window_not_day():
 
 def test_observed_breakdown_is_a_structured_type():
     assert hasattr(ObservedBreakdown, "__dataclass_fields__") or callable(ObservedBreakdown), (
-        "ObservedBreakdown must be a structured result type exposing the four "
-        "observed-only buckets"
+        "ObservedBreakdown must be a structured result type exposing the four observed-only buckets"
     )

@@ -30,16 +30,15 @@ Contracts pinned here (TASK-PH22-RED-SPEC):
      text (baseline realism ≠ intervention-response evidence).
 """
 
-import copy
 import json
 from pathlib import Path
 
 import pytest
 
 from benchmark.mcf.compare import (
+    NEUTRAL_VERDICTS,
     compare_arms,
     compare_repeated_runs,
-    NEUTRAL_VERDICTS,
 )
 
 # ---------------------------------------------------------------------------
@@ -117,8 +116,12 @@ def _baseline_dir(root: Path, name: str = "baseline", seed: int = 42) -> Path:
 
 
 def _intervention_dir(
-    root: Path, name: str = "intervention", seed: int = 42, shift: float = 1.0,
-    days: int = N_DAYS, agents: int = N_AGENTS,
+    root: Path,
+    name: str = "intervention",
+    seed: int = 42,
+    shift: float = 1.0,
+    days: int = N_DAYS,
+    agents: int = N_AGENTS,
 ) -> Path:
     return _write_arm(root / name, seed=seed, leisure_shift=shift, days=days, agents=agents)
 
@@ -155,7 +158,7 @@ def test_arm_execution_order_does_not_matter(tmp_path):
     neutral = _intervention_dir(tmp_path / "neutral", shift=0.0)
     real = _intervention_dir(tmp_path / "real", shift=1.0)
     r_neutral_first = compare_arms(baseline, neutral, intervention_day=INTERVENTION_DAY)
-    r_real_then_neutral = compare_arms(baseline, real, intervention_day=INTERVENTION_DAY)
+    _r_real_then_neutral = compare_arms(baseline, real, intervention_day=INTERVENTION_DAY)
     r_neutral_again = compare_arms(baseline, neutral, intervention_day=INTERVENTION_DAY)
     assert r_neutral_again == r_neutral_first
 
@@ -239,16 +242,11 @@ def test_neutral_intervention_shows_no_artificial_improvement(tmp_path):
 
 
 def test_repeated_runs_report_spread_alongside_mean(tmp_path):
-    baseline_dirs = [
-        _baseline_dir(tmp_path / f"rep{k}" / "baseline", seed=40 + k) for k in range(3)
-    ]
+    baseline_dirs = [_baseline_dir(tmp_path / f"rep{k}" / "baseline", seed=40 + k) for k in range(3)]
     intervention_dirs = [
-        _intervention_dir(tmp_path / f"rep{k}" / "arm", seed=40 + k, shift=1.0 + 0.5 * k)
-        for k in range(3)
+        _intervention_dir(tmp_path / f"rep{k}" / "arm", seed=40 + k, shift=1.0 + 0.5 * k) for k in range(3)
     ]
-    report = compare_repeated_runs(
-        baseline_dirs, intervention_dirs, intervention_day=INTERVENTION_DAY
-    )
+    report = compare_repeated_runs(baseline_dirs, intervention_dirs, intervention_day=INTERVENTION_DAY)
     variation = report["variation"]
     assert len(variation["per_run"]) == 3
     assert variation["spread"] >= 0.0

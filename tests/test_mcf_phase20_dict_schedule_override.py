@@ -87,7 +87,11 @@ def test_dict_schedule_original_sleep_slots_survive_override():
         NIGHT_SCHEDULE_DICT, INTERRUPT_TIME, INTERRUPT_ACTIVITY, duration_minutes=INTERRUPT_DURATION_MINUTES
     )
     assert is_sleep_activity(get_activity_for_time(sched, "00:00")), "pre-interrupt minutes must stay sleep"
-    times = {entry["time"] for entry in sched} if all(isinstance(e, dict) for e in sched) else {t for t, _ in sched}
+    times = (
+        {entry["time"] for entry in sched}
+        if all(isinstance(e, dict) for e in sched)
+        else {t for t, _ in sched}
+    )
     for original_time in ("00:00", "08:00", "12:30", "19:00", "23:30"):
         assert original_time in times, f"original slot {original_time} must survive the dict-format override"
 
@@ -116,15 +120,17 @@ def test_dict_schedule_night_ticks_after_expiry_are_all_sleep():
 def test_dict_schedule_non_sleep_override_stays_persistent():
     """Contract 3a: overriding a NON-sleep dict slot keeps the legacy
     persistent semantics (no expiry slot is invented)."""
-    sched = apply_schedule_override(
-        NIGHT_SCHEDULE_DICT, "12:35", "临时外出办事", duration_minutes=30
-    )
+    sched = apply_schedule_override(NIGHT_SCHEDULE_DICT, "12:35", "临时外出办事", duration_minutes=30)
     expiry = "13:05"
     assert get_activity_for_time(sched, "12:40") == "临时外出办事"
     assert get_activity_for_time(sched, "13:10") != "临时外出办事", (
         "a non-sleep override must persist past its duration (legacy semantics)"
     )
-    times = {entry["time"] for entry in sched} if all(isinstance(e, dict) for e in sched) else {t for t, _ in sched}
+    times = (
+        {entry["time"] for entry in sched}
+        if all(isinstance(e, dict) for e in sched)
+        else {t for t, _ in sched}
+    )
     assert expiry not in times, "no expiry re-assertion slot may be added for a non-sleep override"
 
 

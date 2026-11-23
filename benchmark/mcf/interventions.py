@@ -22,7 +22,7 @@ their delta (fresh-start equivalence: same seed, same roster, config-delta-only)
 import copy
 import re
 
-__all__ = ["InterventionSpecError", "validate_intervention_spec", "apply_intervention"]
+__all__ = ["InterventionSpecError", "apply_intervention", "validate_intervention_spec"]
 
 # Kernel standard interventions (set_agent_state / update_config) plus the
 # declarative policy_events entry; add_agent is NOT here — it is unimplemented
@@ -54,9 +54,7 @@ def validate_intervention_spec(spec):
 
     trigger = normalized.get("trigger")
     if not isinstance(trigger, dict):
-        raise InterventionSpecError(
-            "spec is missing a 'trigger' dict with {'day': int, 'time': 'HH:MM'}"
-        )
+        raise InterventionSpecError("spec is missing a 'trigger' dict with {'day': int, 'time': 'HH:MM'}")
     day = trigger.get("day")
     if not isinstance(day, int) or isinstance(day, bool) or day < 1:
         raise InterventionSpecError(f"trigger.day must be a positive int, got {day!r}")

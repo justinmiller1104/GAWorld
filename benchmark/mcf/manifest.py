@@ -17,7 +17,7 @@ from typing import Any
 
 from benchmark.mcf.config_space import config_id
 
-__all__ = ["build_manifest", "save_manifest", "load_manifest", "code_commit", "targets_provenance"]
+__all__ = ["build_manifest", "code_commit", "load_manifest", "save_manifest", "targets_provenance"]
 
 _SCHEMA_VERSION = 1
 

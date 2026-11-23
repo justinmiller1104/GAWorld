@@ -17,6 +17,7 @@ from gaworld.core.runner import parallel_map, resolve_max_workers
 # Growth-profile lifecycle moved to gaworld.interests_plugin (K3d); only
 # the inline read-side consumers remain (schedule prompt context + matching).
 from gaworld.interests import format_growth_context, match_growth_items
+from gaworld.kernel.policy_events import execute_policy_events, validate_policy_events
 from gaworld.logging_setup import LOG_MODE, get_logger
 from gaworld.settings import CONFIG
 
@@ -56,7 +57,6 @@ from gaworld.goals import (
 # --------------------------------------------------------------------
 from gaworld.kernel import build_kernel
 from gaworld.kernel import remote as kernel_remote
-from gaworld.kernel.policy_events import execute_policy_events, validate_policy_events
 from gaworld.llm.providers import call_llm
 from gaworld.memory.experience import (
     close_all_agent_spans,

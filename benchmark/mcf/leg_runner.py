@@ -98,7 +98,9 @@ def _clock(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-def stub_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim_context: dict[str, Any] | None = None) -> dict[str, Any]:
+def stub_leg_execute(
+    config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim_context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Deterministic offline leg: episode-span files whose time use is a pure
     function of the flattened config patch, scored by the real scorer.
 
@@ -141,7 +143,9 @@ def stub_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, si
     }
 
 
-def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim_context: dict[str, Any] | None = None) -> dict[str, Any]:
+def sim_leg_execute(
+    config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim_context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The REAL execution vehicle: apply the nested config patch to the live
     CONFIG, seed it through the only wired mechanism
     (``CONFIG["random_seed"]``), snapshot the config into the run dir, and run
@@ -156,8 +160,8 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim
     imported the corresponding module globals are rebound for the duration of
     the leg — the same rebinding pattern the call_llm wrapper already uses —
     and restored afterwards."""
-    from gaworld.settings import CONFIG
     import gaworld.llm.providers as providers
+    from gaworld.settings import CONFIG
 
     original = {key: json.loads(json.dumps(CONFIG.get(key))) for key in config}
     sim_original: dict[str, Any] = {}
@@ -184,15 +188,14 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim
             json.dumps(json.loads(json.dumps(CONFIG)), ensure_ascii=False, default=str, indent=2),
             encoding="utf-8",
         )
-        import generative_city_sim  # imported after the canary install so its
         # from-import of call_llm captures the wrapped callable
-
         # the entry module binds call_llm at its FIRST import, so leg 2+ would
         # keep calling leg 1's exhausted canary wrapper (instant budget kill);
         # rebind to this leg's current (wrapped) callable and restore after.
         # gaworld.cognition.realism has the same top-level from-import and is
         # on the per-tick cognition path — rebind it too
         import gaworld.cognition.realism as _realism
+        import generative_city_sim  # imported after the canary install so its
 
         original_sim_llm = generative_city_sim.__dict__.get("call_llm")
         original_realism_llm = _realism.__dict__.get("call_llm")
@@ -222,20 +225,27 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim
                     generative_city_sim.__dict__[gname] = value
         try:
             if sim_context:
-                run_manifest_event = (generative_city_sim.__dict__.get("AGENT_IDS"), generative_city_sim.__dict__.get("SIM_DAYS"))
+                run_manifest_event = (
+                    generative_city_sim.__dict__.get("AGENT_IDS"),
+                    generative_city_sim.__dict__.get("SIM_DAYS"),
+                )
                 (Path(run_dir) / "population_applied.json").write_text(
-                    json.dumps({
-                        "agent_ids": list(sim_context.get("agent_ids") or []),
-                        "n_agents": len(sim_context.get("agent_ids") or []),
-                        "sim_days": sim_context.get("sim_days"),
-                        "city": sim_context.get("city"),
-                        "csv_path": sim_context.get("csv_path"),
-                        "provenance": sim_context.get("population_provenance") or {},
-                        "module_bindings_seen": {
-                            "AGENT_IDS": list(run_manifest_event[0] or []),
-                            "SIM_DAYS": run_manifest_event[1],
+                    json.dumps(
+                        {
+                            "agent_ids": list(sim_context.get("agent_ids") or []),
+                            "n_agents": len(sim_context.get("agent_ids") or []),
+                            "sim_days": sim_context.get("sim_days"),
+                            "city": sim_context.get("city"),
+                            "csv_path": sim_context.get("csv_path"),
+                            "provenance": sim_context.get("population_provenance") or {},
+                            "module_bindings_seen": {
+                                "AGENT_IDS": list(run_manifest_event[0] or []),
+                                "SIM_DAYS": run_manifest_event[1],
+                            },
                         },
-                    }, ensure_ascii=False, indent=2),
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
                     encoding="utf-8",
                 )
             generative_city_sim.run_simulation()
@@ -265,9 +275,13 @@ def sim_leg_execute(config: dict[str, Any], run_dir: Path, *, seed: int = 0, sim
                 CONFIG.pop(key, None)
             else:
                 CONFIG[key] = value
-    return {"ok": True, "usage": {}, "episodes_dir": str(run_dir),
-            "agents": len((sim_context or {}).get("agent_ids") or []),
-            "days": (sim_context or {}).get("sim_days")}
+    return {
+        "ok": True,
+        "usage": {},
+        "episodes_dir": str(run_dir),
+        "agents": len((sim_context or {}).get("agent_ids") or []),
+        "days": (sim_context or {}).get("sim_days"),
+    }
 
 
 # ---------------------------------------------------------------------------

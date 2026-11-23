@@ -87,16 +87,16 @@ class TestIncompleteRunsAreLoud:
     def test_run_with_missing_outcome_rows_raises(self):
         broken = {"run_id": "rX", "arm": "baseline", "venue.admission": None, "attempts": None}
         with pytest.raises(_mod().IncompleteRunError):
-            _mod().aggregate(_six_runs() + [broken])
+            _mod().aggregate([*_six_runs(), broken])
 
     def test_run_without_arm_label_raises(self):
         broken = _run("rX", None, admitted=1, denied=0)
         with pytest.raises(_mod().IncompleteRunError):
-            _mod().aggregate(_six_runs() + [broken])
+            _mod().aggregate([*_six_runs(), broken])
 
     def test_excluded_runs_are_reported_not_silently_dropped(self):
         broken = {"run_id": "rX", "arm": "baseline", "venue.admission": None, "attempts": None}
-        agg = _mod().aggregate(_six_runs() + [broken], on_incomplete="exclude")
+        agg = _mod().aggregate([*_six_runs(), broken], on_incomplete="exclude")
         assert "rX" in agg["excluded"], "an excluded run must be named in the output"
         assert agg["arms"]["baseline"]["attempts"] == 20  # unchanged by the broken run
 

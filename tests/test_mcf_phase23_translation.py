@@ -18,8 +18,6 @@ import copy
 import json
 from pathlib import Path
 
-import pytest
-
 from benchmark.mcf.experiment import run_experiment
 
 # A minimal, valid set_agent_state intervention spec (same schema as the
@@ -49,9 +47,7 @@ class DryHarness:
 
 def test_set_agent_state_policy_event_entry_carries_operation_and_targets(tmp_path):
     result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(SPEC), DryHarness(), run_root=tmp_path)
-    cfg = json.loads(
-        (Path(result["intervention"]["run_dir"]) / "config.json").read_text(encoding="utf-8")
-    )
+    cfg = json.loads((Path(result["intervention"]["run_dir"]) / "config.json").read_text(encoding="utf-8"))
     events = [e for e in cfg.get("policy_events", []) if e.get("name") == SPEC["name"]]
     assert events, "set_agent_state must translate into a policy_events entry the sim matches per tick"
     event = events[0]

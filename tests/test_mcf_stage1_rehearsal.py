@@ -14,12 +14,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-from benchmark.mcf.config_space import endpoint_configs, validate_config  # noqa: F401
-from benchmark.mcf.orchestrator import expand_legs, run_legs  # noqa: F401
-from benchmark.mcf.time_use import ScoreResult, score_against_targets
-
+from benchmark.mcf.config_space import endpoint_configs, validate_config
+from benchmark.mcf.orchestrator import expand_legs, run_legs
+from benchmark.mcf.time_use import score_against_targets
 
 ROSTER_EMPLOYED = [2, 5, 7, 9, 11, 13, 17, 21, 23, 29, 31, 37]  # 12 employed agents (fixture ids)
 SEEDS = [101, 202]
@@ -78,14 +75,13 @@ class RecordingScorer:
 
 def _stage1_configs() -> list[dict]:
     """The two Stage 1 configs as flat dotted patches, via the M1 module."""
-    return [
-        validate_config({"personality.style_fit_amplitude": value}) for value in STYLE_VALUES
-    ]
+    return [validate_config({"personality.style_fit_amplitude": value}) for value in STYLE_VALUES]
 
 
 # ---------------------------------------------------------------------------
 # plan
 # ---------------------------------------------------------------------------
+
 
 class TestStage1Plan:
     def test_stage1_style_values_are_inside_the_admissible_band(self):
@@ -114,6 +110,7 @@ class TestStage1Plan:
 # ---------------------------------------------------------------------------
 # execution via the stub harness (no inference)
 # ---------------------------------------------------------------------------
+
 
 class TestStage1Rehearsal:
     def test_four_legs_complete_through_the_stub(self, tmp_path: Path):
@@ -210,9 +207,9 @@ class TestStage1Rehearsal:
         # touches the real LLM plumbing (the stub harness is the only executor)
         import benchmark.mcf.orchestrator as orch
 
-        assert not hasattr(orch, "call_llm") or orch.call_llm is None or True
+        assert not hasattr(orch, "call_llm") or orch.call_llm is None
         harness = RehearsalHarness()
-        results = run_legs(
+        _results = run_legs(
             expand_legs(_stage1_configs(), SEEDS),
             harness=harness,
             run_root=tmp_path,

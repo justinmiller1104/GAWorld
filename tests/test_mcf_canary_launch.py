@@ -39,7 +39,6 @@ import pytest
 from benchmark.mcf.canary import CanaryBudget, CanaryExceeded, CanaryLimits
 from benchmark.mcf.launch import prepare_canary  # missing => whole module RED
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -74,15 +73,15 @@ class FakeBaseLLM:
 
 
 def make_limits(**overrides) -> CanaryLimits:
-    defaults = dict(
-        max_calls=400,
-        max_tokens=250_000,
-        max_cost_usd=1.00,
-        max_elapsed_seconds=1800,
-        max_error_rate=0.05,
-        min_error_sample=20,
-        pricing=SIMPLE_PRICING,
-    )
+    defaults = {
+        "max_calls": 400,
+        "max_tokens": 250_000,
+        "max_cost_usd": 1.00,
+        "max_elapsed_seconds": 1800,
+        "max_error_rate": 0.05,
+        "min_error_sample": 20,
+        "pricing": SIMPLE_PRICING,
+    }
     defaults.update(overrides)
     return CanaryLimits(**defaults)
 
@@ -114,7 +113,7 @@ class TestPrepareCanaryContract(unittest.TestCase):
         assert callable(wrapped)
         assert isinstance(budget, CanaryBudget)
         # Independent instances: two preps never share a ledger.
-        wrapped2, budget2 = prepare_canary(fake_config(), make_limits(), SIMPLE_PRICING, authorize=True)
+        _wrapped2, budget2 = prepare_canary(fake_config(), make_limits(), SIMPLE_PRICING, authorize=True)
         assert budget is not budget2
 
 
@@ -144,9 +143,9 @@ class TestOptInEnablement(unittest.TestCase):
 
     def test_enabled_via_env_var(self, monkeypatch=None):
         base = FakeBaseLLM()
-        from benchmark.mcf.launch import maybe_canary_llm
-
         import os
+
+        from benchmark.mcf.launch import maybe_canary_llm
 
         old = os.environ.get("GAWORLD_CANARY")
         os.environ["GAWORLD_CANARY"] = "1"
@@ -178,14 +177,14 @@ class TestOptInEnablement(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 KERNEL_CALL_TASKS = [
-    "social_profile",   # setup
+    "social_profile",  # setup
     "weekend_routine",  # setup
-    "daily_routine",    # routine
-    "schedule",         # action planning
-    "event_effect",     # perception
-    "planning",         # action
-    "reflection",       # memory/reflection
-    "news_analysis",    # news
+    "daily_routine",  # routine
+    "schedule",  # action planning
+    "event_effect",  # perception
+    "planning",  # action
+    "reflection",  # memory/reflection
+    "news_analysis",  # news
     "diary_import_summary",  # digest-style
 ]
 
@@ -206,7 +205,9 @@ class TestOneBudgetAcrossKernelCalls(unittest.TestCase):
             "must be counted against the single canary budget"
         )
         assert usage["tokens"] == len(KERNEL_CALL_TASKS) * (base.tokens_in + base.tokens_out)
-        assert base.calls == len(KERNEL_CALL_TASKS), "wrapped llm must dispatch each call to the base provider"
+        assert base.calls == len(KERNEL_CALL_TASKS), (
+            "wrapped llm must dispatch each call to the base provider"
+        )
 
     def test_wrapper_signature_matches_call_llm(self):
         wrapped, _ = prepare_canary(fake_config(), make_limits(), SIMPLE_PRICING, authorize=True)
@@ -247,7 +248,7 @@ class TestRetryBudgeting(unittest.TestCase):
     def test_error_rate_kill_after_min_sample(self):
         base = FakeBaseLLM()
         limits = make_limits(max_error_rate=0.5, min_error_sample=4, max_calls=100)
-        wrapped, budget = prepare_canary(
+        wrapped, _budget = prepare_canary(
             fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=base
         )
         base.fail_calls = set(range(1, 100))  # every call fails
@@ -272,9 +273,7 @@ class TestConcurrency(unittest.TestCase):
     def test_parallel_calls_respected_by_budget(self):
         base = FakeBaseLLM(tokens_in=1000, tokens_out=1000)
         limits = make_limits(max_tokens=3000, max_calls=50)  # only ~1.5 calls of token headroom
-        wrapped, budget = prepare_canary(
-            fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=base
-        )
+        wrapped, budget = prepare_canary(fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=base)
 
         results: list[str] = []
         errors: list[Exception] = []
@@ -294,7 +293,9 @@ class TestConcurrency(unittest.TestCase):
         # With reservations counting toward the ceiling, at most 2 calls may
         # be dispatched (each 2000 tokens vs a 3000 ceiling); no over-commit.
         usage = budget.usage_snapshot()
-        assert usage["calls"] <= 2, f"in-flight reservations must cap concurrent dispatch, got {usage['calls']}"
+        assert usage["calls"] <= 2, (
+            f"in-flight reservations must cap concurrent dispatch, got {usage['calls']}"
+        )
         assert usage["tokens"] <= limits.max_tokens
 
 
@@ -307,9 +308,7 @@ class TestKillConditions(unittest.TestCase):
     def _wrapped(self, **limit_overrides):
         base = FakeBaseLLM(tokens_in=500, tokens_out=500)  # $0.001/call at 1.0/1M
         limits = make_limits(**limit_overrides)
-        wrapped, budget = prepare_canary(
-            fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=base
-        )
+        wrapped, budget = prepare_canary(fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=base)
         return base, wrapped, budget
 
     def test_call_limit_kill(self):
@@ -338,7 +337,7 @@ class TestKillConditions(unittest.TestCase):
         assert "cost" in exc.value.reason
 
     def test_time_limit_kill(self):
-        base, wrapped, _ = self._wrapped(max_elapsed_seconds=0.0)
+        _base, wrapped, _ = self._wrapped(max_elapsed_seconds=0.0)
         import time as _time
 
         _time.sleep(0.01)
@@ -381,9 +380,7 @@ class TestPartialManifest(unittest.TestCase):
     def test_terminated_run_leaves_retrievable_json_manifest(self):
         base = FakeBaseLLM()
         limits = make_limits(max_calls=2)
-        wrapped, budget = prepare_canary(
-            fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=base
-        )
+        wrapped, budget = prepare_canary(fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=base)
         wrapped("p", task="planning")
         wrapped("p", task="reflection")
         with pytest.raises(CanaryExceeded) as exc:
@@ -397,7 +394,9 @@ class TestPartialManifest(unittest.TestCase):
         assert json.loads(json.dumps(manifest)) == manifest, "manifest must round-trip JSON"
 
     def test_budget_reports_final_usage_after_kill(self):
-        wrapped, budget = prepare_canary(fake_config(), make_limits(max_calls=1), SIMPLE_PRICING, authorize=True)
+        wrapped, budget = prepare_canary(
+            fake_config(), make_limits(max_calls=1), SIMPLE_PRICING, authorize=True
+        )
         wrapped("p", task="planning")
         try:
             wrapped("p", task="planning")
@@ -415,17 +414,13 @@ class TestPartialManifest(unittest.TestCase):
 class TestIsolation(unittest.TestCase):
     def test_sequential_preps_do_not_share_state(self):
         limits = make_limits(max_calls=2)
-        w1, b1 = prepare_canary(
-            fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=FakeBaseLLM()
-        )
+        w1, b1 = prepare_canary(fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=FakeBaseLLM())
         w1("p", task="planning")
         w1("p", task="planning")
         with pytest.raises(CanaryExceeded):
             w1("p", task="planning")
 
-        w2, b2 = prepare_canary(
-            fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=FakeBaseLLM()
-        )
+        w2, b2 = prepare_canary(fake_config(), limits, SIMPLE_PRICING, authorize=True, base_llm=FakeBaseLLM())
         w2("p", task="planning")  # fresh budget: no inheritance from b1
         assert b2.usage_snapshot()["calls"] == 1
         assert b1.usage_snapshot()["calls"] == 2

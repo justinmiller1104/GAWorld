@@ -52,6 +52,7 @@ class ErrorRateHarness:
 # default cap present (already specified in M2 — kept as an anchor)
 # ---------------------------------------------------------------------------
 
+
 class TestDefaultCap:
     def test_default_limits_include_max_error_rate(self):
         assert DEFAULT_LEG_LIMITS["max_error_rate"] == 0.05
@@ -60,6 +61,7 @@ class TestDefaultCap:
 # ---------------------------------------------------------------------------
 # enforcement
 # ---------------------------------------------------------------------------
+
 
 class TestErrorRateEnforcement:
     def test_leg_over_error_rate_is_interrupted_with_named_reason(self, tmp_path):
@@ -80,7 +82,9 @@ class TestErrorRateEnforcement:
 
     def test_boundary_rate_just_over_cap_interrupts(self, tmp_path):
         # 2 / 40 = 5.0% at cap; 3 / 40 = 7.5% over
-        harness = ErrorRateHarness([{"ok": True, "usage": _usage(40, errors=2)}, {"ok": True, "usage": _usage(40, errors=3)}])
+        harness = ErrorRateHarness(
+            [{"ok": True, "usage": _usage(40, errors=2)}, {"ok": True, "usage": _usage(40, errors=3)}]
+        )
         rows = run_legs([({"a": 1}, 1), ({"a": 2}, 2)], harness=harness, run_root=tmp_path)["legs"]
         assert rows[0]["status"] == "completed"
         assert rows[1]["status"] == "interrupted"

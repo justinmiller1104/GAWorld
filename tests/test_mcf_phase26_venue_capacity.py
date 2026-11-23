@@ -34,8 +34,6 @@ import os
 import tempfile
 import unittest
 
-import pytest
-
 from gaworld.kernel import ActionRequest, build_kernel
 from gaworld.world import city_map as cm
 from gaworld.world import venue_capacity as vc
@@ -74,8 +72,12 @@ class _World:
         self.records = tempfile.mkdtemp()
         cap = {"enabled": enabled, **(capacity or {})}
         self.ctx = build_kernel(
-            {"local_physical": {"capacity": cap}, "traffic": traffic or {}, "random_seed": 7,
-             "records": {"output_dir": self.records}},
+            {
+                "local_physical": {"capacity": cap},
+                "traffic": traffic or {},
+                "random_seed": 7,
+                "records": {"output_dir": self.records},
+            },
             load_entry_points=False,
         )
         self.ctx.extras["city_map"] = _map(shop_capacity)
@@ -85,8 +87,13 @@ class _World:
 
     def tick(self, time_str="12:00", day=1):
         self.ctx.clock.advance(time_str, 0)
-        self.ctx.bus.emit("on_time_tick", day=day, time_str=time_str,
-                          city_map=self.ctx.extras["city_map"], agents=self.agents)
+        self.ctx.bus.emit(
+            "on_time_tick",
+            day=day,
+            time_str=time_str,
+            city_map=self.ctx.extras["city_map"],
+            agents=self.agents,
+        )
 
     def go(self, agent_id, to):
         return self.ctx.controller.validate(ActionRequest(agent_id, "move", {"to": to}), self.ctx)

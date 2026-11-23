@@ -59,7 +59,11 @@ def _ep(agent_id: int, day: int, time: str, activity: str) -> dict[str, object]:
 def test_overnight_head_of_day_is_attributed_not_dropped():
     daily = {
         1: {
-            1: [_ep(1, 1, "09:00", "上班工作"), _ep(1, 1, "18:00", "回家休闲放松"), _ep(1, 1, "23:40", "上床睡觉")],
+            1: [
+                _ep(1, 1, "09:00", "上班工作"),
+                _ep(1, 1, "18:00", "回家休闲放松"),
+                _ep(1, 1, "23:40", "上床睡觉"),
+            ],
             2: [_ep(1, 2, "07:30", "吃早饭"), _ep(1, 2, "08:00", "上班工作")],
         }
     }
@@ -70,8 +74,7 @@ def test_overnight_head_of_day_is_attributed_not_dropped():
     day2 = result.per_agent_day[1][2]
     # 00:00 -> 07:30 is the tail of night sleep: 450 minutes of sleep.
     assert day2["sleep"] >= 440, (
-        f"overnight sleep on day 2 should be carried into day 2 accounting, "
-        f"got {day2['sleep']} minutes"
+        f"overnight sleep on day 2 should be carried into day 2 accounting, got {day2['sleep']} minutes"
     )
     # And the day must still sum to the full 24h span.
     total = sum(day2.values())
@@ -127,9 +130,7 @@ def test_incomplete_day_triggers_uncertainty_warning_and_short_span():
     assert any("coverage" in w or "incomplete" in w for w in result.uncertainty_warnings), (
         "incomplete day must trigger an uncertainty warning"
     )
-    assert result.coverage < 0.85, (
-        f"coverage {result.coverage:.2f} ignores that half the day was unobserved"
-    )
+    assert result.coverage < 0.85, f"coverage {result.coverage:.2f} ignores that half the day was unobserved"
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +151,7 @@ def test_low_coverage_triggers_uncertainty_warning():
     result = score_against_targets(compute_daily_minutes(daily[1][1], tick_minutes=10), employed_agents=[1])
     assert result.coverage < 0.85
     assert any("coverage" in w for w in result.uncertainty_warnings), (
-        "coverage below 0.85 must raise an uncertainty warning so a bad mapper "
-        "cannot look deceptively clean"
+        "coverage below 0.85 must raise an uncertainty warning so a bad mapper cannot look deceptively clean"
     )
 
 
@@ -182,7 +182,9 @@ def test_score_against_targets_accepts_explicit_day_types():
     # A workday/restday flag must be accepted; with it, paid_work is scored
     # only over workdays (weekend day 2 must not dilute the participants mean).
     result = score_against_targets(
-        compute_daily_minutes([ep for d in daily.values() for eps in d.values() for ep in eps], tick_minutes=10),
+        compute_daily_minutes(
+            [ep for d in daily.values() for eps in d.values() for ep in eps], tick_minutes=10
+        ),
         employed_agents=[1],
         day_types={1: {1: "workday", 2: "restday"}},
     )

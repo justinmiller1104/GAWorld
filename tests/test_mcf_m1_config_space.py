@@ -19,7 +19,6 @@ The dotted paths below were verified against the REAL config implementation
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
 
 import pytest
 
@@ -34,10 +33,10 @@ from benchmark.mcf.config_space import (  # noqa: F401
 )
 from gaworld.settings import CONFIG, build_config
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 def _read_path(config: dict, path: str):
     node = config
@@ -61,6 +60,7 @@ def _flat(config: dict, prefix: str = "") -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # band encoding — real dotted paths
 # ---------------------------------------------------------------------------
+
 
 class TestBands:
     def test_four_bands_defined(self):
@@ -89,17 +89,13 @@ class TestBands:
         # there is no top-level behavior.contagion_weight; the knob that the
         # pilot actually turns is personality.emotion_baseline.contagion_weight
         assert BANDS["contagion_weight"]["path"] == "personality.emotion_baseline.contagion_weight"
-        assert isinstance(
-            _read_path(build_config(), BANDS["contagion_weight"]["path"]), (int, float)
-        )
+        assert isinstance(_read_path(build_config(), BANDS["contagion_weight"]["path"]), (int, float))
 
     def test_spending_variance_band(self):
         band = BANDS["spending_daily_variance"]
         assert (band["low"], band["high"]) == (0.10, 0.40)
         assert BANDS["spending_daily_variance"]["path"] == "economy.spending.daily_variance"
-        assert isinstance(
-            _read_path(build_config(), BANDS["spending_daily_variance"]["path"]), (int, float)
-        )
+        assert isinstance(_read_path(build_config(), BANDS["spending_daily_variance"]["path"]), (int, float))
 
     def test_temperature_band(self):
         band = BANDS["temperature"]
@@ -119,6 +115,7 @@ class TestBands:
 # ---------------------------------------------------------------------------
 # excluded params
 # ---------------------------------------------------------------------------
+
 
 class TestExcludedParams:
     def test_excluded_set_lists_the_doc_params(self):
@@ -146,6 +143,7 @@ class TestExcludedParams:
 # validate_config
 # ---------------------------------------------------------------------------
 
+
 class TestValidateConfig:
     def test_valid_mid_band_value_accepted(self):
         normalized = validate_config({"personality.style_fit_amplitude": 0.25})
@@ -169,7 +167,7 @@ class TestValidateConfig:
         assert _flat(normalized)[BANDS[param]["path"]] == value
 
     def test_stress_style_fit_0_9_rejected(self):
-        with pytest.raises(ValueError, match="0.9|stress"):
+        with pytest.raises(ValueError, match=r"0\.9|stress"):
             validate_config({"personality.style_fit_amplitude": 0.9})
 
     def test_out_of_band_below_rejected(self):
@@ -185,7 +183,7 @@ class TestValidateConfig:
             validate_config({BANDS["temperature"]["path"]: 0.9})
 
     def test_unknown_param_rejected(self):
-        with pytest.raises(ValueError, match="personality.strength"):
+        with pytest.raises(ValueError, match=r"personality\.strength"):
             validate_config({"personality.strength": 0.8})
 
     def test_unknown_top_level_rejected(self):
@@ -213,6 +211,7 @@ class TestValidateConfig:
 # ---------------------------------------------------------------------------
 # endpoint sampler
 # ---------------------------------------------------------------------------
+
 
 class TestEndpoints:
     def test_two_endpoints_per_parameter(self):
@@ -249,6 +248,7 @@ class TestEndpoints:
 # config ids
 # ---------------------------------------------------------------------------
 
+
 class TestConfigIds:
     def test_same_patch_same_id(self):
         patch = {"personality.style_fit_amplitude": 0.1}
@@ -273,6 +273,7 @@ class TestConfigIds:
 # ---------------------------------------------------------------------------
 # patch application / exactness against the real config
 # ---------------------------------------------------------------------------
+
 
 class TestPatchExactness:
     @pytest.mark.parametrize(

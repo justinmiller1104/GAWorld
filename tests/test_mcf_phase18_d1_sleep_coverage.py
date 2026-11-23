@@ -47,6 +47,7 @@ from gaworld.sim._utils import _build_time_grid
 def _mcf_realism_on(monkeypatch):
     monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
 
+
 # The pilot archetype template (pilot16 agent_4_schedule.json) minus the
 # 睡前 tail: exactly the shape that produced the 00:00–07:50 hole.
 PILOT_DAY_SCHEDULE: list[tuple[str, str]] = [
@@ -74,7 +75,7 @@ def _sleep_slot(schedule: list[tuple[str, str]]) -> tuple[str, str] | None:
 def _head_minutes(schedule: list[tuple[str, str]]) -> list[int]:
     """Minutes of the day strictly before the schedule's first slot."""
     first = min(int(t.split(":")[0]) * 60 + int(t.split(":")[1]) for t, _ in schedule)
-    return list(range(0, first))
+    return list(range(first))
 
 
 # ---------------------------------------------------------------------------
@@ -86,9 +87,8 @@ def test_no_personal_time_fallback_on_full_day_grid():
     schedule = ensure_sleep_in_schedule(DEFAULT_AGENT, list(PILOT_DAY_SCHEDULE))
     for time_str in _build_time_grid(10):
         activity = get_activity_for_time(schedule, time_str)
-        assert activity != "个人时间" or "21:00" <= time_str, (
-            f"{time_str}: 个人时间 fallback — head-of-day hole still present "
-            f"(schedule={schedule})"
+        assert activity != "个人时间" or time_str >= "21:00", (
+            f"{time_str}: 个人时间 fallback — head-of-day hole still present (schedule={schedule})"
         )
 
 
@@ -99,8 +99,7 @@ def test_every_head_of_day_minute_is_sleep():
         time_str = f"{hh:02d}:{mm:02d}"
         activity = get_activity_for_time(schedule, time_str)
         assert is_sleep_activity(activity), (
-            f"{time_str}: expected sleep coverage before the first slot "
-            f"({schedule[0][0]}), got {activity!r}"
+            f"{time_str}: expected sleep coverage before the first slot ({schedule[0][0]}), got {activity!r}"
         )
 
 
@@ -124,9 +123,9 @@ def test_coverage_extends_over_midnight_for_late_profile():
 def test_first_morning_slot_bounds_the_sleep_window():
     # With a later first slot (09:00), sleep coverage must reach it — the
     # window ends where the schedule's own day begins, not at a fixed hour.
-    later = [("09:00", "吃早饭")] + list(PILOT_DAY_SCHEDULE[1:])
+    later = [("09:00", "吃早饭"), *list(PILOT_DAY_SCHEDULE[1:])]
     schedule = ensure_sleep_in_schedule(DEFAULT_AGENT, later)
-    for minutes in range(0, 9 * 60):
+    for minutes in range(9 * 60):
         hh, mm = divmod(minutes, 60)
         activity = get_activity_for_time(schedule, f"{hh:02d}:{mm:02d}")
         assert is_sleep_activity(activity), (

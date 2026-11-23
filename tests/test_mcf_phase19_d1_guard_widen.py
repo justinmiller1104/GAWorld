@@ -49,6 +49,7 @@ DEFAULT_AGENT: dict = {"job": "职员", "personality": "", "daily_life": "", "va
 def _mcf_realism_on(monkeypatch):
     monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
 
+
 # The Phase 1.8 fixture shape (no 00:00 slot at all) — control group.
 PILOT_DAY_SCHEDULE: list[tuple[str, str]] = [
     ("08:00", "吃早饭"),
@@ -99,11 +100,9 @@ def _head_minutes(schedule: list[tuple[str, str]]) -> list[int]:
     """Minutes of the day strictly before the schedule's last head-of-day
     slot at/after 07:00 — i.e. the night region the guard must cover."""
     morning = [
-        int(t.split(":")[0]) * 60 + int(t.split(":")[1])
-        for t, _ in schedule
-        if int(t.split(":")[0]) >= 7
+        int(t.split(":")[0]) * 60 + int(t.split(":")[1]) for t, _ in schedule if int(t.split(":")[0]) >= 7
     ]
-    return list(range(0, min(morning)) if morning else [])
+    return list(range(min(morning)) if morning else [])
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +149,7 @@ def test_pilot_agent4_head_is_sleep_resolvable():
     for minutes in _head_minutes(schedule):
         hh, mm = divmod(minutes, 60)
         activity = get_activity_for_time(schedule, f"{hh:02d}:{mm:02d}")
-        assert activity != "个人时间", (
-            f"agent 4 shape: {hh:02d}:{mm:02d} fell back to 个人时间: {schedule}"
-        )
+        assert activity != "个人时间", f"agent 4 shape: {hh:02d}:{mm:02d} fell back to 个人时间: {schedule}"
 
 
 def test_pilot_agent15_head_is_sleep_resolvable():
@@ -163,9 +160,7 @@ def test_pilot_agent15_head_is_sleep_resolvable():
     for minutes in _head_minutes(schedule):
         hh, mm = divmod(minutes, 60)
         activity = get_activity_for_time(schedule, f"{hh:02d}:{mm:02d}")
-        assert activity != "个人时间", (
-            f"agent 15 shape: {hh:02d}:{mm:02d} fell back to 个人时间: {schedule}"
-        )
+        assert activity != "个人时间", f"agent 15 shape: {hh:02d}:{mm:02d} fell back to 个人时间: {schedule}"
 
 
 # ---------------------------------------------------------------------------
@@ -179,9 +174,7 @@ def test_no_invented_slot_times():
     # The existing Phase 1.8 tail derivation may add its own time; every
     # other output time must already exist in the input schedule.
     for t in {t for t, _ in schedule} - input_times:
-        assert is_sleep_activity(dict(schedule)[t]), (
-            f"a new non-sleep slot time {t} was invented: {schedule}"
-        )
+        assert is_sleep_activity(dict(schedule)[t]), f"a new non-sleep slot time {t} was invented: {schedule}"
     assert "00:00" in {t for t, _ in schedule}, (
         f"the existing 00:00 head time was dropped instead of converted: {schedule}"
     )

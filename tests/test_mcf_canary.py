@@ -16,13 +16,12 @@ from __future__ import annotations
 import time
 import unittest
 
-from benchmark.mcf.canary import (  # noqa: F401
+from benchmark.mcf.canary import (
     CanaryBudget,
     CanaryExceeded,
     CanaryLimits,
     run_canary,
 )
-
 
 # ---------------------------------------------------------------------------
 # Deterministic fake provider: never touches the network or a real LLM.
@@ -50,15 +49,15 @@ SIMPLE_PRICING = {"test-model": {"input": 1.0, "output": 1.0}}
 
 
 def make_limits(**overrides) -> CanaryLimits:
-    defaults = dict(
-        max_calls=400,
-        max_tokens=250_000,
-        max_cost_usd=1.00,
-        max_elapsed_seconds=1800,
-        max_error_rate=0.05,
-        min_error_sample=20,
-        pricing=SIMPLE_PRICING,
-    )
+    defaults = {
+        "max_calls": 400,
+        "max_tokens": 250_000,
+        "max_cost_usd": 1.00,
+        "max_elapsed_seconds": 1800,
+        "max_error_rate": 0.05,
+        "min_error_sample": 20,
+        "pricing": SIMPLE_PRICING,
+    }
     defaults.update(overrides)
     return CanaryLimits(**defaults)
 

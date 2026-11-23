@@ -26,7 +26,7 @@ from unittest import mock
 import requests
 from requests.utils import get_encoding_from_headers
 
-from gaworld.llm.providers import OpenAIProvider, OllamaProvider
+from gaworld.llm.providers import OllamaProvider, OpenAIProvider
 from gaworld.sim._action import _parse_action_space
 
 CHINESE_TEXT = "找地方避雨"
@@ -60,7 +60,7 @@ class _FakeStreamResponse:
     def raise_for_status(self) -> None:
         return None
 
-    def __enter__(self) -> "_FakeStreamResponse":
+    def __enter__(self) -> _FakeStreamResponse:
         return self
 
     def __exit__(self, *exc) -> bool:
@@ -147,9 +147,7 @@ def _openai_stream_frames(text: str, style: str = "openai") -> list[str]:
     # OpenAI-compatible: content arrives in deltas.
     return [
         json.dumps({"choices": [{"index": 0, "delta": {"content": text}}]}, ensure_ascii=False),
-        json.dumps(
-            {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}, ensure_ascii=False
-        ),
+        json.dumps({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}, ensure_ascii=False),
         "[DONE]",
     ]
 
@@ -189,9 +187,7 @@ class TestOpenAIStreamingUtf8(unittest.TestCase):
         ):
             result = provider.call("hi")
         parsed = _parse_action_space(result, ACTIVITIES)
-        self.assertEqual(
-            set(parsed.keys()), set(ACTIVITIES), f"mojibake keys failed exact-match: {parsed!r}"
-        )
+        self.assertEqual(set(parsed.keys()), set(ACTIVITIES), f"mojibake keys failed exact-match: {parsed!r}")
         self.assertEqual(parsed[ACTIVITIES[0]], ["在屋檐下躲雨"])
 
     def test_multibyte_split_across_chunks_decodes_correctly(self):
@@ -211,9 +207,7 @@ class TestOpenAIStreamingUtf8(unittest.TestCase):
         blocking = _make_openai_provider(stream=False)
         streaming = _make_openai_provider(stream=True)
         payload = {"choices": [{"message": {"content": text}, "finish_reason": "stop"}]}
-        with mock.patch(
-            "gaworld.llm.providers.requests.post", return_value=_blocking_response(payload)
-        ):
+        with mock.patch("gaworld.llm.providers.requests.post", return_value=_blocking_response(payload)):
             blocking_text = blocking.call("hi")
         with mock.patch(
             "gaworld.llm.providers.requests.post", return_value=_sse(_openai_stream_frames(text))
@@ -297,15 +291,16 @@ class TestProviderCompatibilityUntouched(unittest.TestCase):
                 result = provider.call("hi")
             self.assertEqual(1, post.call_count, f"{style}: unexpected retry/extra call")
             self.assertIn(CHINESE_TEXT, result)
-            self.assertIn("/chat/completions", str(post.call_args),
-                          f"{style}: request must still hit the chat/completions endpoint")
+            self.assertIn(
+                "/chat/completions",
+                str(post.call_args),
+                f"{style}: request must still hit the chat/completions endpoint",
+            )
 
     def test_blocking_provider_still_reports_finish_reason_and_usage(self):
         provider = _make_openai_provider(stream=False)
         payload = {"choices": [{"message": {"content": CHINESE_TEXT}, "finish_reason": "stop"}]}
-        with mock.patch(
-            "gaworld.llm.providers.requests.post", return_value=_blocking_response(payload)
-        ):
+        with mock.patch("gaworld.llm.providers.requests.post", return_value=_blocking_response(payload)):
             result = provider.call("hi")
         self.assertEqual(CHINESE_TEXT, result)
 

@@ -48,8 +48,12 @@ class TestLaunchModeField:
     def test_checkpoint_restore_manifest_is_accepted(self):
         manifest = {
             "launch_mode": "checkpoint-restore",
-            "replay": {"window": {"start": 3, "stop": 3}, "events_total": 0,
-                       "events_consumed": 0, "mismatches": 0},
+            "replay": {
+                "window": {"start": 3, "stop": 3},
+                "events_total": 0,
+                "events_consumed": 0,
+                "mismatches": 0,
+            },
         }
         assert _mod().launch_mode_of(manifest) == "checkpoint-restore"
 
@@ -96,8 +100,12 @@ class TestNoCheckpointRestorationClaims:
     def test_fresh_start_replay_is_never_checkpoint_restoration(self):
         manifest = {
             "launch_mode": "fresh-start-replay",
-            "replay": {"window": {"start": 1, "stop": 3}, "events_total": 594,
-                       "events_consumed": 594, "mismatches": 0},
+            "replay": {
+                "window": {"start": 1, "stop": 3},
+                "events_total": 594,
+                "events_consumed": 594,
+                "mismatches": 0,
+            },
         }
         assert _mod().may_claim_checkpoint_restore(manifest) is False
         assert _mod().describe_launch(manifest) == "fresh-start-replay"
@@ -105,8 +113,12 @@ class TestNoCheckpointRestorationClaims:
     def test_checkpoint_restore_label_requires_launch_mode_saying_so(self):
         manifest = {
             "launch_mode": "checkpoint-restore",
-            "replay": {"window": {"start": 3, "stop": 3}, "events_total": 0,
-                       "events_consumed": 0, "mismatches": 0},
+            "replay": {
+                "window": {"start": 3, "stop": 3},
+                "events_total": 0,
+                "events_consumed": 0,
+                "mismatches": 0,
+            },
         }
         assert _mod().may_claim_checkpoint_restore(manifest) is True
         assert _mod().describe_launch(manifest) == "checkpoint-restoration"

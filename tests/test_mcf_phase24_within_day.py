@@ -40,9 +40,12 @@ N_AGENTS = 25  # >= MIN_COMPARISON_POPULATION
 
 # Intraday episode slots at 10-minute resolution between 13:00 and 16:00 —
 # the window straddling the trigger tick. The rest of the day is boilerplate.
-STRADDLE_TIMES = [f"13:{m:02d}" for m in (0, 10, 20, 30, 40, 50)] + [
-    f"14:{m:02d}" for m in (0, 10, 20, 30, 40, 50)
-] + [f"15:{m:02d}" for m in (0, 10, 20, 30, 40, 50)] + ["16:00"]
+STRADDLE_TIMES = (
+    [f"13:{m:02d}" for m in (0, 10, 20, 30, 40, 50)]
+    + [f"14:{m:02d}" for m in (0, 10, 20, 30, 40, 50)]
+    + [f"15:{m:02d}" for m in (0, 10, 20, 30, 40, 50)]
+    + ["16:00"]
+)
 
 DAY_SCHEDULE = (
     [("07:00", "吃早饭"), ("08:00", "上班工作"), ("12:00", "吃午饭")]
@@ -99,9 +102,7 @@ def _write_arm(directory: Path, *, seed: int, diverge_after_trigger: bool) -> Pa
 @pytest.fixture()
 def arms(tmp_path: Path):
     baseline = _write_arm(tmp_path / "baseline", seed=42, diverge_after_trigger=False)
-    intervention = _write_arm(
-        tmp_path / "intervention", seed=42, diverge_after_trigger=True
-    )
+    intervention = _write_arm(tmp_path / "intervention", seed=42, diverge_after_trigger=True)
     return baseline, intervention
 
 

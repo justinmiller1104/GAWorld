@@ -52,13 +52,22 @@ def make_base(ok=True, tokens=(300, 200), result=None, error=None):
     """A mock stand-in for ``gaworld.llm.providers.call_llm``."""
     calls: list[dict] = []
 
-    def base(prompt, task=None, agent_id=None, provider=None, system=None,
-             temperature=None, allow_fallback=True, images=None, max_tokens=None):
+    def base(
+        prompt,
+        task=None,
+        agent_id=None,
+        provider=None,
+        system=None,
+        temperature=None,
+        allow_fallback=True,
+        images=None,
+        max_tokens=None,
+    ):
         calls.append({"prompt": prompt, "task": task, "agent_id": agent_id})
         if error is not None:
             raise error
-        return result if result is not None else FakeResult(
-            text="ok", tokens_in=tokens[0], tokens_out=tokens[1]
+        return (
+            result if result is not None else FakeResult(text="ok", tokens_in=tokens[0], tokens_out=tokens[1])
         )
 
     base.calls = calls
@@ -70,6 +79,7 @@ def make_base(ok=True, tokens=(300, 200), result=None, error=None):
 # 1. The wrapper exists and routes every call through check → base → record
 # ---------------------------------------------------------------------------
 
+
 class TestWrapCallLLMExists:
     def test_wrap_call_llm_is_exported(self):
         assert callable(wrap_call_llm)
@@ -78,9 +88,7 @@ class TestWrapCallLLMExists:
         params = inspect.signature(wrap_call_llm).parameters
         names = set(params)
         assert any("base" in n for n in names), f"no base-callable param in {names}"
-        assert any("budget" in n or "limit" in n for n in names), (
-            f"no budget/limits param in {names}"
-        )
+        assert any("budget" in n or "limit" in n for n in names), f"no budget/limits param in {names}"
 
     def test_every_call_routes_through_budget(self):
         base = make_base()
@@ -105,6 +113,7 @@ class TestWrapCallLLMExists:
 # ---------------------------------------------------------------------------
 # 2. Retries count as additional calls against the budget
 # ---------------------------------------------------------------------------
+
 
 class TestRetriesCountTowardBudget:
     def test_retry_after_provider_error_is_a_new_budgeted_call(self):
@@ -145,19 +154,19 @@ class TestRetriesCountTowardBudget:
 # 3. Default-off: unwrapped path is untouched
 # ---------------------------------------------------------------------------
 
+
 class TestDefaultOff:
     def test_call_llm_works_without_canary_and_does_not_import_it(self):
-        import gaworld.llm.providers as providers
         import inspect
+
+        import gaworld.llm.providers as providers
 
         # Module-graph assertion: the production module must not import the
         # canary (or any benchmark module) — checked at source level, since
         # sys.modules absence is not observable once any test in the session
         # has imported the canary deliberately.
         source = inspect.getsource(providers)
-        assert "benchmark" not in source, (
-            "production providers module pulled in the canary at import time"
-        )
+        assert "benchmark" not in source, "production providers module pulled in the canary at import time"
         # And the plain public entry point still exists with its signature.
         sig = inspect.signature(providers.call_llm)
         assert "prompt" in sig.parameters
@@ -172,6 +181,7 @@ class TestDefaultOff:
 # ---------------------------------------------------------------------------
 # 4. Missing pricing → refuses to enable
 # ---------------------------------------------------------------------------
+
 
 class TestRefusesWithoutPricing:
     def test_limits_without_pricing_raise(self):
@@ -190,6 +200,7 @@ class TestRefusesWithoutPricing:
 # ---------------------------------------------------------------------------
 # 5. Budget exhaustion mid-run, including during retries / in-flight
 # ---------------------------------------------------------------------------
+
 
 class TestBudgetExhaustionMidRun:
     def test_call_budget_exhaustion_raises_canary_exceeded(self):
@@ -230,6 +241,7 @@ class TestBudgetExhaustionMidRun:
 # 6. Provider errors count toward the error-rate kill
 # ---------------------------------------------------------------------------
 
+
 class TestErrorRateKill:
     def test_provider_errors_trigger_error_rate_kill(self):
         flaky = make_base(error=RuntimeError("provider down"))
@@ -252,6 +264,7 @@ class TestErrorRateKill:
 # ---------------------------------------------------------------------------
 # 7. Usage snapshot preserved on termination
 # ---------------------------------------------------------------------------
+
 
 class TestUsagePreservedOnTermination:
     def test_usage_survives_canary_exceeded(self):
@@ -281,6 +294,7 @@ class TestUsagePreservedOnTermination:
 # 8. Dry-run: zero real calls through the wrapped path
 # ---------------------------------------------------------------------------
 
+
 class TestDryRunZeroCalls:
     def test_dry_run_wrapped_path_issues_no_base_calls(self):
         base = make_base()
@@ -308,6 +322,7 @@ class TestDryRunZeroCalls:
 # ---------------------------------------------------------------------------
 # 9. No global mutable state leak between wrapped / unwrapped runs
 # ---------------------------------------------------------------------------
+
 
 class TestNoGlobalStateLeak:
     def test_two_budgets_are_independent(self):

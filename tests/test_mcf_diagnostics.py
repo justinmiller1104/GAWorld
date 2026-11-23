@@ -53,7 +53,9 @@ def test_flat_dimension_flagged_when_seed_spread_covers_config_range():
     by_axis = {d["axis"]: d for d in out}
     assert by_axis["leisure_social_error"]["flat"] is True
     assert by_axis["paid_work_error"]["flat"] is False
-    assert by_axis["leisure_social_error"]["config_range"] < by_axis["leisure_social_error"]["max_seed_spread"]
+    assert (
+        by_axis["leisure_social_error"]["config_range"] < by_axis["leisure_social_error"]["max_seed_spread"]
+    )
 
 
 def test_no_flat_dimension_when_configs_separate():
@@ -98,6 +100,7 @@ def test_report_reports_bound_pressing_for_frontier_configs():
     assert pressing and pressing[0]["config"] == "a"
     assert pressing[0]["param"] == "personality.style_fit_amplitude"
     assert pressing[0]["edge"] == "high"
+
 
 # ------------------------------------------------------- limitations block
 

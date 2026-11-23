@@ -26,9 +26,7 @@ def _validate_run(run):
     if run.get("venue.admission") is None:
         problems.append("missing venue.admission rows")
     if problems:
-        raise IncompleteRunError(
-            f"run {run.get('run_id')!r} is incomplete: {'; '.join(problems)}"
-        )
+        raise IncompleteRunError(f"run {run.get('run_id')!r} is incomplete: {'; '.join(problems)}")
     return run
 
 

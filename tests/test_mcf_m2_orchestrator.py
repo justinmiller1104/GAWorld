@@ -21,19 +21,17 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-from benchmark.mcf.orchestrator import (  # noqa: F401
+from benchmark.mcf.orchestrator import (
     DEFAULT_LEG_LIMITS,
     expand_legs,
     run_legs,
 )
 from benchmark.mcf.time_use import ScoreResult, score_against_targets
 
-
 # ---------------------------------------------------------------------------
 # stub harness (offline — no inference anywhere in this file)
 # ---------------------------------------------------------------------------
+
 
 class StubHarness:
     """Records (config, seed, run_dir) per leg and writes deterministic episode files.
@@ -72,7 +70,13 @@ class SpyScorer:
         self.result = result
 
     def __call__(self, directory, employed_agent_ids, tick_minutes=10):
-        self.calls.append({"directory": str(directory), "employed_agent_ids": list(employed_agent_ids), "tick_minutes": tick_minutes})
+        self.calls.append(
+            {
+                "directory": str(directory),
+                "employed_agent_ids": list(employed_agent_ids),
+                "tick_minutes": tick_minutes,
+            }
+        )
         return self.result
 
 
@@ -86,6 +90,7 @@ def _scored_result() -> ScoreResult:
 # ---------------------------------------------------------------------------
 # leg expansion
 # ---------------------------------------------------------------------------
+
 
 class TestExpandLegs:
     def test_two_configs_two_seeds_make_four_legs(self):
@@ -112,6 +117,7 @@ class TestExpandLegs:
 # default limits — doc §5 Stage 1 caps, configurable
 # ---------------------------------------------------------------------------
 
+
 class TestLimits:
     def test_stage1_default_caps(self):
         assert DEFAULT_LEG_LIMITS["max_calls"] == 21000
@@ -125,7 +131,12 @@ class TestLimits:
             [({"a.b": 1}, 1)],
             harness=harness,
             run_root=tmp_path,
-            limits={"max_calls": 3, "max_tokens": 11_000_000, "max_elapsed_seconds": 80000, "max_error_rate": 0.05},
+            limits={
+                "max_calls": 3,
+                "max_tokens": 11_000_000,
+                "max_elapsed_seconds": 80000,
+                "max_error_rate": 0.05,
+            },
         )
         assert results["legs"][0]["status"] != "completed"
 
@@ -133,6 +144,7 @@ class TestLimits:
 # ---------------------------------------------------------------------------
 # leg isolation + manifests
 # ---------------------------------------------------------------------------
+
 
 class TestLegIsolation:
     def test_each_leg_gets_its_own_run_dir_and_manifest(self, tmp_path: Path):
@@ -164,6 +176,7 @@ class TestLegIsolation:
 # budget violations
 # ---------------------------------------------------------------------------
 
+
 class TestBudgetViolation:
     def test_over_budget_leg_stops_with_reason_others_complete(self, tmp_path: Path):
         # seed 999's harness burns far more calls than the (configured) cap:
@@ -179,7 +192,12 @@ class TestBudgetViolation:
             [({"a.b": 1}, 1), ({"a.b": 1}, 999)],
             harness=MixedHarness(),
             run_root=tmp_path,
-            limits={"max_calls": 21000, "max_tokens": 11_000_000, "max_elapsed_seconds": 80000, "max_error_rate": 0.05},
+            limits={
+                "max_calls": 21000,
+                "max_tokens": 11_000_000,
+                "max_elapsed_seconds": 80000,
+                "max_error_rate": 0.05,
+            },
             scorer=SpyScorer(_scored_result()),
         )
         by_seed = {leg["seed"]: leg for leg in results["legs"]}
@@ -207,6 +225,7 @@ class TestBudgetViolation:
 # ---------------------------------------------------------------------------
 # token honesty (measured vs estimated)
 # ---------------------------------------------------------------------------
+
 
 class TestTokenHonesty:
     def test_measured_usage_is_reported_as_measured(self, tmp_path: Path):
@@ -244,7 +263,10 @@ class TestTokenHonesty:
                 return result
 
         results = run_legs(
-            [({"a.b": 1}, 1)], harness=BrokenUsageHarness(), run_root=tmp_path, scorer=SpyScorer(_scored_result())
+            [({"a.b": 1}, 1)],
+            harness=BrokenUsageHarness(),
+            run_root=tmp_path,
+            scorer=SpyScorer(_scored_result()),
         )
         assert results["legs"][0]["usage_source"] == "estimated"
 
@@ -252,6 +274,7 @@ class TestTokenHonesty:
 # ---------------------------------------------------------------------------
 # scoring collection
 # ---------------------------------------------------------------------------
+
 
 class TestScoring:
     def test_score_result_is_collected_when_scoring_data_exists(self, tmp_path: Path):
@@ -287,6 +310,7 @@ class TestScoring:
 # ---------------------------------------------------------------------------
 # results table
 # ---------------------------------------------------------------------------
+
 
 class TestResultsTable:
     def test_table_is_json_serializable_with_required_fields(self, tmp_path: Path):

@@ -61,7 +61,7 @@ def _write_arm(directory: Path, *, diverge: bool) -> Path:
         for agent_id in AGENTS:
             path = directory / f"agent_{agent_id}.jsonl"
             with open(path, "a", encoding="utf-8") as fh:
-                for i, time in enumerate(SLOT_TIMES):
+                for time in SLOT_TIMES:
                     activity = "上班工作"
                     state = {"stress": 0.10, "emotion": 0.50}
                     if diverge and day == 2 and time == SLOT_TIMES[7]:
@@ -129,7 +129,10 @@ def test_first_divergence_tick_reported(tmp_path):
     assert tick is not None, "a diverging pair must carry first_divergence_tick"
     assert tick["day"] == 2
     assert tick["time"] == SLOT_TIMES[7]
-    assert set(tick["agent_id"] if isinstance(tick["agent_id"], (set, list)) else [tick["agent_id"]]) <= {1, 2}
+    assert set(tick["agent_id"] if isinstance(tick["agent_id"], (set, list)) else [tick["agent_id"]]) <= {
+        1,
+        2,
+    }
 
 
 def test_first_divergence_tick_none_when_identical(tmp_path):

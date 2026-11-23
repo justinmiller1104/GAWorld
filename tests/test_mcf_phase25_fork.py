@@ -24,8 +24,6 @@ Deterministic stub harnesses; no LLM, no network, no real simulation.
 import json
 from pathlib import Path
 
-import pytest
-
 from benchmark.mcf.experiment import fork_arms_from_checkpoint
 
 TRIGGER = {"day": 2, "time": "10:00"}
@@ -76,13 +74,15 @@ def _fork(tmp_path: Path, baseline_cfg=None, intervention_cfg=None):
 def test_both_arms_restore_the_same_checkpoint(tmp_path):
     """Each arm's harness-visible config must point at the SAME checkpoint
     dir (the shared pre-intervention history source)."""
-    _, result, log = _fork(tmp_path)
+    _, _result, log = _fork(tmp_path)
     by_tag = {rec["tag"]: rec for rec in log}
     # both arms name the same checkpoint dir as their restore source
     assert by_tag["baseline"]["config"].get("resume_from_checkpoint") == by_tag["intervention"]["config"].get(
         "resume_from_checkpoint"
     )
-    assert by_tag["baseline"]["config"].get("resume_from_checkpoint"), "restore source missing from baseline config"
+    assert by_tag["baseline"]["config"].get("resume_from_checkpoint"), (
+        "restore source missing from baseline config"
+    )
 
 
 def test_arms_get_separate_run_dirs(tmp_path):
@@ -133,7 +133,9 @@ def test_manifests_record_fork_provenance(tmp_path):
     window (trigger) — auditable provenance for the shared history."""
     ckpt, result, _ = _fork(tmp_path)
     for arm in ("baseline", "intervention"):
-        manifest = json.loads((Path(result[arm]["run_dir"]) / "run_manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (Path(result[arm]["run_dir"]) / "run_manifest.json").read_text(encoding="utf-8")
+        )
         fork = manifest.get("fork")
         assert fork, f"{arm}: manifest missing fork provenance"
         assert fork["checkpoint"] == str(ckpt)

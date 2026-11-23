@@ -9,13 +9,13 @@ global rebinding, restore) is the real production code.
 
 import json
 
-from gaworld.apps import mcf_api
 from benchmark.mcf.population import (
     city_roster,
     config_overrides_for,
     random_sample,
     resolve_population,
 )
+from gaworld.apps import mcf_api
 
 CITY_A = "伦敦"
 CITY_B = "wuzhen"  # 乌镇镇 — a bundle with a real 63-resident roster
@@ -27,6 +27,7 @@ def _ids(city):
 
 # 1. two different cities produce different selected populations
 
+
 def test_two_cities_produce_different_populations():
     a = resolve_population({"city": CITY_A, "method": "random", "sample_size": 10, "sample_seed": 1})
     b = resolve_population({"city": CITY_B, "method": "random", "sample_size": 10, "sample_seed": 1})
@@ -36,8 +37,10 @@ def test_two_cities_produce_different_populations():
 
 # 2. manual selection survives pagination (selection across pages resolves fully)
 
+
 def test_manual_selection_across_pages():
     from gaworld.apps import city_api
+
     page1 = city_api.agents(CITY_A, limit=5, offset=0)
     page2 = city_api.agents(CITY_A, limit=5, offset=5)
     assert page1["agents"] and page2["agents"]
@@ -47,6 +50,7 @@ def test_manual_selection_across_pages():
 
 
 # 3. identical seeds reproduce identical samples
+
 
 def test_random_sample_reproducible():
     ids = _ids(CITY_A)
@@ -58,6 +62,7 @@ def test_random_sample_reproducible():
 
 # 4. entire-population selection does not silently truncate
 
+
 def test_all_population_no_truncation():
     all_ids = _ids(CITY_A)
     resolved = resolve_population({"city": CITY_A, "method": "all"})
@@ -67,6 +72,7 @@ def test_all_population_no_truncation():
 
 # 5. selected residents reach actual simulation initialization (real vehicle,
 #    LLM boundary replaced by a capturing double)
+
 
 def test_selected_residents_and_city_reach_the_engine(monkeypatch):
     import generative_city_sim as gcs
@@ -89,10 +95,10 @@ def test_selected_residents_and_city_reach_the_engine(monkeypatch):
     sim_context["sim_days"] = 12
     sim_context["population_provenance"] = {"city": CITY_B, "method": "manual", "n_agents": len(ids)}
     from pathlib import Path
+
     from benchmark.mcf.leg_runner import sim_leg_execute
 
-    sim_leg_execute({"personality.style_fit_amplitude": 0.3}, Path("/tmp"), seed=7,
-                    sim_context=sim_context)
+    sim_leg_execute({"personality.style_fit_amplitude": 0.3}, Path("/tmp"), seed=7, sim_context=sim_context)
     assert captured["AGENT_IDS"] == ids
     assert captured["SIM_DAYS"] == 12
     assert captured["CONFIG_AGENTS"] == ids
@@ -109,6 +115,7 @@ def test_engine_state_restored_after_leg(monkeypatch):
     before_days = gcs.SIM_DAYS
     before_csv = str(gcs.CSV_PATH)
     from pathlib import Path
+
     from benchmark.mcf.leg_runner import sim_leg_execute
 
     sim_context = dict(config_overrides_for(CITY_A))
@@ -116,12 +123,13 @@ def test_engine_state_restored_after_leg(monkeypatch):
     sim_context["sim_days"] = 3
     sim_leg_execute({}, Path("/tmp"), seed=1, sim_context=sim_context)
     assert list(gcs.AGENT_IDS) == before_ids
-    assert gcs.SIM_DAYS == before_days
+    assert before_days == gcs.SIM_DAYS
     assert str(gcs.CSV_PATH) == before_csv
 
 
 # 5b. harness-level propagation: the orchestrator-facing harness hands the
 # sim context to the vehicle (LLM boundary: execute double)
+
 
 def test_harness_passes_sim_context_to_vehicle(tmp_path):
     from benchmark.mcf.leg_runner import make_leg_harness
@@ -132,11 +140,16 @@ def test_harness_passes_sim_context_to_vehicle(tmp_path):
         seen["context"] = sim_context
         return {"ok": True, "usage": {}, "episodes_dir": str(run_dir)}
 
-    harness = make_leg_harness(execute=vehicle, sim_context={
-        "city": CITY_A, "csv_path": "data/cities/伦敦/agents.csv",
-        "agent_ids": [1, 2, 3], "sim_days": 9,
-        "population_provenance": {"city": CITY_A, "method": "manual", "n_agents": 3},
-    })
+    harness = make_leg_harness(
+        execute=vehicle,
+        sim_context={
+            "city": CITY_A,
+            "csv_path": "data/cities/伦敦/agents.csv",
+            "agent_ids": [1, 2, 3],
+            "sim_days": 9,
+            "population_provenance": {"city": CITY_A, "method": "manual", "n_agents": 3},
+        },
+    )
     out = harness({"personality.style_fit_amplitude": 0.2}, tmp_path / "leg", seed=5)
     assert out["ok"] is True
     assert seen["context"]["agent_ids"] == [1, 2, 3]
@@ -145,12 +158,14 @@ def test_harness_passes_sim_context_to_vehicle(tmp_path):
 
 # 6. duration changes the requested simulation horizon
 
+
 def test_duration_changes_horizon(monkeypatch):
     import generative_city_sim as gcs
 
     seen = []
     monkeypatch.setattr(gcs, "run_simulation", lambda: seen.append(gcs.SIM_DAYS))
     from pathlib import Path
+
     from benchmark.mcf.leg_runner import sim_leg_execute
 
     base = dict(config_overrides_for(CITY_A))
@@ -163,6 +178,7 @@ def test_duration_changes_horizon(monkeypatch):
 
 
 # 7. derived employment IDs reach the orchestrator/scorer path
+
 
 def test_derived_employed_ids_reach_run_legs(monkeypatch, tmp_path):
     exp_payload = {
@@ -183,8 +199,7 @@ def test_derived_employed_ids_reach_run_legs(monkeypatch, tmp_path):
     assert code == 201
     derived = created["population"]["employed_agent_ids"]
     roster = {r["id"]: r for r in city_roster(CITY_A)}
-    expected = sorted(i for i in created["population"]["agent_ids"]
-                      if roster[i]["employment"] == "employed")
+    expected = sorted(i for i in created["population"]["agent_ids"] if roster[i]["employment"] == "employed")
     assert derived == expected and derived
 
     captured = {}
@@ -197,7 +212,7 @@ def test_derived_employed_ids_reach_run_legs(monkeypatch, tmp_path):
         return {"legs": []}
 
     monkeypatch.setattr(orch, "run_legs", fake_run_legs)
-    monkeypatch.setattr(mcf_api, "_build_harness", lambda exp: (lambda c, d, seed=0: {}))
+    monkeypatch.setattr(mcf_api, "_build_harness", lambda exp: lambda c, d, seed=0: {})
     monkeypatch.setattr(mcf_api, "_save_exp", lambda exp: None)
     monkeypatch.setattr(mcf_api, "_load_exp", lambda _id: fake_exp)
     mcf_api._run_job(created["id"])
@@ -205,6 +220,7 @@ def test_derived_employed_ids_reach_run_legs(monkeypatch, tmp_path):
 
 
 # 8. saved experiments reopen without losing configuration
+
 
 def test_population_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(mcf_api, "_mcf_root", lambda: str(tmp_path))
@@ -234,15 +250,23 @@ def test_population_roundtrip(tmp_path, monkeypatch):
 
 # 9. invalid inputs rejected at the backend
 
+
 def test_invalid_inputs_rejected():
-    good_archs = [{"id": "m0", "label": "a", "patch": {}},
-                  {"id": "m1", "label": "b", "patch": {"personality.channels.rules": False}}]
-    base = {"architectures": good_archs, "parameters": ["style_fit_amplitude"],
-            "sampler": "endpoints", "n_configs": 1, "seeds": [7]}
+    good_archs = [
+        {"id": "m0", "label": "a", "patch": {}},
+        {"id": "m1", "label": "b", "patch": {"personality.channels.rules": False}},
+    ]
+    base = {
+        "architectures": good_archs,
+        "parameters": ["style_fit_amplitude"],
+        "sampler": "endpoints",
+        "n_configs": 1,
+        "seeds": [7],
+    }
     cases = [
         {"population": {"city": "narnia", "method": "all"}},
         {"population": {"city": CITY_A, "method": "manual", "agent_ids": [99999999]}},
-        {"population": {"city": CITY_A, "method": "random", "sample_size": 10 ** 6, "sample_seed": 1}},
+        {"population": {"city": CITY_A, "method": "random", "sample_size": 10**6, "sample_seed": 1}},
         {"population": {"city": CITY_A, "method": "bogus"}},
         {"population": {"city": CITY_A, "method": "all"}, "sim_days": 0},
         {"population": {"city": CITY_A, "method": "all"}, "sim_days": 2.5},
@@ -256,18 +280,25 @@ def test_invalid_inputs_rejected():
 
 # 10. historical MCF results remain unchanged / old manifests readable
 
+
 def test_historical_experiments_untouched(tmp_path, monkeypatch):
     monkeypatch.setattr(mcf_api, "_mcf_root", lambda: str(tmp_path / "mcf"))
-    exp = json.load(open("output/mcf/phase5-final/experiment.json"))
+    with open("output/mcf/phase5-final/experiment.json", encoding="utf-8") as fh:
+        exp = json.load(fh)
     assert "population" not in exp and "sim_days" not in exp
-    created, code = mcf_api.create_experiment({
-        "name": "legacy-shape",
-        "architectures": [
-            {"id": "m0", "label": "a", "patch": {}},
-            {"id": "m1", "label": "b", "patch": {"personality.channels.rules": False}}],
-        "parameters": ["style_fit_amplitude"], "sampler": "endpoints",
-        "n_configs": 1, "seeds": [7],
-    })
+    created, code = mcf_api.create_experiment(
+        {
+            "name": "legacy-shape",
+            "architectures": [
+                {"id": "m0", "label": "a", "patch": {}},
+                {"id": "m1", "label": "b", "patch": {"personality.channels.rules": False}},
+            ],
+            "parameters": ["style_fit_amplitude"],
+            "sampler": "endpoints",
+            "n_configs": 1,
+            "seeds": [7],
+        }
+    )
     assert code == 201
     assert "population" not in created and "sim_days" not in created
     harness = mcf_api._build_harness(created)
@@ -287,5 +318,5 @@ def test_sample_preview_endpoint_contract():
         {"city": CITY_A, "method": "random", "sample_size": "5", "sample_seed": "42"},
     )
     assert again["agent_ids"] == preview["agent_ids"]
-    err, code = mcf_api.handle_get("/api/mcf/sample-preview", {"city": "narnia", "method": "all"})
+    _err, code = mcf_api.handle_get("/api/mcf/sample-preview", {"city": "narnia", "method": "all"})
     assert code == 400

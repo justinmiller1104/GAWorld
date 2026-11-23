@@ -85,9 +85,7 @@ def _stub_llm(response="LIVE"):
 def test_repeated_identical_prompts_replay_their_own_responses_in_order():
     """The Phase 2.5 defect: 1,558 calls / 1,099 unique keys. The same prompt
     twice with different responses must replay R1 then R2, in call order."""
-    replay, restore = install_sequence_replay(
-        [_event("同样的提示", "R1"), _event("同样的提示", "R2")]
-    )
+    replay, restore = install_sequence_replay([_event("同样的提示", "R1"), _event("同样的提示", "R2")])
     try:
         assert replay("同样的提示", task="t", agent_id=1, system="s", temperature=0.7) == "R1"
         assert replay("同样的提示", task="t", agent_id=1, system="s", temperature=0.7) == "R2"
@@ -196,9 +194,7 @@ def test_reordered_call_raises_at_the_current_index():
 
 
 def test_coverage_reports_hits_over_total_recorded_events():
-    replay, restore = install_sequence_replay(
-        [_event("p1", "R1"), _event("p2", "R2"), _event("p3", "R3")]
-    )
+    replay, restore = install_sequence_replay([_event("p1", "R1"), _event("p2", "R2"), _event("p3", "R3")])
     try:
         for p in ("p1", "p2", "p3"):
             replay(p, task="t", agent_id=1, system="s", temperature=0.7)
@@ -239,7 +235,10 @@ def test_stop_predicate_switches_to_live_and_consumes_nothing():
     )
     try:
         assert replay("pre-trigger", task="t", agent_id=1, system="s", temperature=0.7) == "R1"
-        assert replay("现在是 10:00 的感知", task="t", agent_id=1, system="s", temperature=0.7) == "LIVE-AT-TRIGGER"
+        assert (
+            replay("现在是 10:00 的感知", task="t", agent_id=1, system="s", temperature=0.7)
+            == "LIVE-AT-TRIGGER"
+        )
         assert len(base.calls) == 1, "stop-passed call must reach the live base llm"
         assert replay.coverage() == {"hits": 1, "total": 2}, "stop-passed call consumes no event"
     finally:

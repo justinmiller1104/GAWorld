@@ -29,7 +29,6 @@ from benchmark.mcf.config_space import validate_config
 from benchmark.mcf.time_use import classify_activity, score_directory
 from gaworld.apps import mcf_api
 
-
 THETA_PATH = "personality.emotion_baseline.contagion_weight"
 RESERVED_MESSAGE_PARTS = ("Θ parameter", "architecture")
 
@@ -145,7 +144,7 @@ def test_run_job_threads_employed_agent_ids_for_real_experiments(env, monkeypatc
     assert status == 201, body
     exp_id = body["id"]
     stored, _ = mcf_api.handle_get(f"/api/mcf/experiment/{exp_id}", {})
-    exp = stored["experiment"] if "experiment" in stored else stored
+    exp = stored.get("experiment", stored)
     assert exp.get("employed_agent_ids") == [3, 4], (
         "spec must persist employed_agent_ids for real experiments (RED: plumbing missing)"
     )
@@ -210,8 +209,24 @@ def _write_agent_jsonl(path: Path) -> None:
     two surviving snapshots, re-attributing span-covered minutes ⇒ > 1440.
     """
     rows: list[dict[str, object]] = [
-        {"kind": "span", "agent_id": 5, "day": 1, "start": "00:00", "end": "08:00", "activity": "睡觉", "purpose": ""},
-        {"kind": "span", "agent_id": 5, "day": 1, "start": "08:00", "end": "20:00", "activity": "上班", "purpose": ""},
+        {
+            "kind": "span",
+            "agent_id": 5,
+            "day": 1,
+            "start": "00:00",
+            "end": "08:00",
+            "activity": "睡觉",
+            "purpose": "",
+        },
+        {
+            "kind": "span",
+            "agent_id": 5,
+            "day": 1,
+            "start": "08:00",
+            "end": "20:00",
+            "activity": "上班",
+            "purpose": "",
+        },
         {"agent_id": 5, "day": 1, "time": "07:00", "final_activity": "睡觉"},
         {"agent_id": 5, "day": 1, "time": "21:00", "final_activity": "休闲"},
     ]

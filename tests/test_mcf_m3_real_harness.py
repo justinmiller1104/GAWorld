@@ -38,20 +38,29 @@ from typing import Any
 
 import pytest
 
-from benchmark.mcf.real_harness import make_real_harness  # noqa: F401 — the feature under test
-
+from benchmark.mcf.real_harness import make_real_harness
 
 # ---------------------------------------------------------------------------
 # stub inner execution (offline — no inference)
 # ---------------------------------------------------------------------------
 
+
 class SpyExecute:
     """Records how the adapter invoked the real arm-execution path."""
 
-    def __init__(self, result: dict[str, Any] | None = None, raise_exc: Exception | None = None, baseline_llm: Any = None):
+    def __init__(
+        self,
+        result: dict[str, Any] | None = None,
+        raise_exc: Exception | None = None,
+        baseline_llm: Any = None,
+    ):
         self.baseline_llm = baseline_llm
         self.calls: list[dict[str, Any]] = []
-        self.result = result if result is not None else {"ok": True, "usage": {"calls": 1, "tokens_in": 10, "tokens_out": 5}}
+        self.result = (
+            result
+            if result is not None
+            else {"ok": True, "usage": {"calls": 1, "tokens_in": 10, "tokens_out": 5}}
+        )
         self.raise_exc = raise_exc
 
     def __call__(self, config: dict, run_dir: Path, *, seed: int) -> dict:
@@ -94,6 +103,7 @@ def _clean_canary_state():
 # adapter factory shape and signature
 # ---------------------------------------------------------------------------
 
+
 class TestAdapterFactory:
     def test_make_real_harness_exists_and_is_callable_factory(self):
         assert callable(make_real_harness)
@@ -113,8 +123,11 @@ class TestAdapterFactory:
 # isolated run dir via launch.create_run; restart-per-run
 # ---------------------------------------------------------------------------
 
+
 class TestIsolatedRunDir:
-    def test_inner_execution_receives_fresh_isolated_subdir_with_manifest(self, tmp_path, _clean_canary_state):
+    def test_inner_execution_receives_fresh_isolated_subdir_with_manifest(
+        self, tmp_path, _clean_canary_state
+    ):
         spy = SpyExecute()
         harness = make_real_harness(seed=7, execute=spy)
         leg_dir = tmp_path / "leg_000"
@@ -140,7 +153,9 @@ class TestIsolatedRunDir:
         harness = make_real_harness(seed=7, execute=spy)
         harness({"a.b": 1}, tmp_path / "leg_000")
         run_dir = spy.calls[0]["run_dir"]
-        leftover = [p.name for p in run_dir.rglob("*") if "checkpoint" in p.name.lower() or "resume" in p.name.lower()]
+        leftover = [
+            p.name for p in run_dir.rglob("*") if "checkpoint" in p.name.lower() or "resume" in p.name.lower()
+        ]
         assert leftover == []
         config_passed = spy.calls[0]["config"]
         assert not any("checkpoint" in str(k).lower() or "resume" in str(k).lower() for k in config_passed)
@@ -149,6 +164,7 @@ class TestIsolatedRunDir:
 # ---------------------------------------------------------------------------
 # seed threading through the wired CONFIG["random_seed"] path
 # ---------------------------------------------------------------------------
+
 
 class TestSeedThreading:
     def test_seed_reaches_inner_execution(self, tmp_path, _clean_canary_state):
@@ -172,15 +188,14 @@ class TestSeedThreading:
         spy = SpyExecute()
         harness = make_real_harness(seed=4242, execute=spy)
         harness({"a.b": 1}, tmp_path / "leg_000")
-        manifest = json.loads(
-            (spy.calls[0]["run_dir"] / "run_manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((spy.calls[0]["run_dir"] / "run_manifest.json").read_text(encoding="utf-8"))
         assert manifest.get("seed") == 4242
 
 
 # ---------------------------------------------------------------------------
 # canary budget controls installed + restored
 # ---------------------------------------------------------------------------
+
 
 class TestCanaryInstallation:
     def test_call_llm_wrapped_during_execution(self, tmp_path, _clean_canary_state):
@@ -202,7 +217,12 @@ class TestCanaryInstallation:
         assert providers.call_llm is original, "adapter must restore the unwrapped call_llm afterwards"
 
     def test_leg_limits_threaded_into_canary_config(self, tmp_path, _clean_canary_state):
-        limits = {"max_calls": 1234, "max_tokens": 5_000_000, "max_elapsed_seconds": 999, "max_error_rate": 0.02}
+        limits = {
+            "max_calls": 1234,
+            "max_tokens": 5_000_000,
+            "max_elapsed_seconds": 999,
+            "max_error_rate": 0.02,
+        }
         spy = SpyExecute()
         harness = make_real_harness(seed=7, limits=limits, execute=spy)
         harness({"a.b": 1}, tmp_path / "leg_000")
@@ -229,6 +249,7 @@ class TestCanaryInstallation:
 # result compatibility with run_legs (status/usage/measured accounting)
 # ---------------------------------------------------------------------------
 
+
 class TestResultContract:
     def test_ok_and_usage_passthrough(self, tmp_path, _clean_canary_state):
         spy = SpyExecute(result={"ok": True, "usage": {"calls": 3, "tokens_in": 30, "tokens_out": 15}})
@@ -241,7 +262,13 @@ class TestResultContract:
 
     def test_measured_usage_passthrough_for_token_honesty(self, tmp_path, _clean_canary_state):
         measured = {"prompt_tokens": 111, "completion_tokens": 22}  # _measured_usage shape
-        spy = SpyExecute(result={"ok": True, "usage": {"calls": 1, "tokens_in": 0, "tokens_out": 0}, "measured_usage": measured})
+        spy = SpyExecute(
+            result={
+                "ok": True,
+                "usage": {"calls": 1, "tokens_in": 0, "tokens_out": 0},
+                "measured_usage": measured,
+            }
+        )
         harness = make_real_harness(seed=7, execute=spy)
         result = harness({"a.b": 1}, tmp_path / "leg_000")
         assert result["measured_usage"] == measured, (
@@ -261,9 +288,7 @@ class TestResultContract:
         result = harness({"a.b": 1}, tmp_path / "leg_000")
         assert result.get("ok") is False
         assert "RuntimeError" in str(result.get("error") or result.get("stop_reason") or "")
-        manifest = json.loads(
-            (spy.calls[0]["run_dir"] / "run_manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((spy.calls[0]["run_dir"] / "run_manifest.json").read_text(encoding="utf-8"))
         assert manifest["outcome"] == "in_progress", "a crash must leave the partial manifest as evidence"
 
     def test_inner_failure_outcome_finalized_in_manifest(self, tmp_path, _clean_canary_state):
@@ -271,7 +296,5 @@ class TestResultContract:
         harness = make_real_harness(seed=7, execute=spy)
         result = harness({"a.b": 1}, tmp_path / "leg_000")
         assert result.get("ok") is False
-        manifest = json.loads(
-            (spy.calls[0]["run_dir"] / "run_manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((spy.calls[0]["run_dir"] / "run_manifest.json").read_text(encoding="utf-8"))
         assert manifest["outcome"] == "incomplete"

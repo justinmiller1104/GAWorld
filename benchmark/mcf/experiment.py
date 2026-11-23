@@ -39,8 +39,9 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from benchmark.mcf.compare import NEUTRAL_VERDICTS, compare_arms
 from benchmark.mcf.interventions import InterventionSpecError, validate_intervention_spec
@@ -53,7 +54,7 @@ except ImportError:  # replay module always present in-tree; keep launcher impor
     install_sequence_replay = None
     sim_time_stop_predicate = None
 
-__all__ = ["run_experiment", "run_leg", "fork_arms_from_checkpoint"]
+__all__ = ["fork_arms_from_checkpoint", "run_experiment", "run_leg"]
 
 # real per-leg runner (task 3753): lives in leg_runner, re-exported so the
 # dashboard's ``_build_harness`` finds ``experiment.run_leg``
@@ -71,7 +72,7 @@ def run_experiment(
     base_config: dict[str, Any],
     intervention_spec: dict[str, Any],
     harness: Harness,
-    run_root: "str | Path",
+    run_root: str | Path,
 ) -> dict[str, Any]:
     """Run one baseline arm and one intervention arm and compare them.
 
@@ -124,9 +125,9 @@ def run_experiment(
 
 
 def fork_arms_from_checkpoint(
-    checkpoint_dir: "str | Path",
+    checkpoint_dir: str | Path,
     arms: dict[str, dict[str, Any]],
-    run_root: "str | Path",
+    run_root: str | Path,
 ) -> dict[str, dict[str, Any]]:
     """Fork every arm in ``arms`` from the SAME checkpoint dir.
 
@@ -411,9 +412,9 @@ def _config_value_matches(config_path: Path, kwargs: dict[str, Any]) -> bool:
 
 def _first_divergent_tick(
     baseline_dir: Path, intervention_dir: Path, trigger: dict[str, Any]
-) -> "tuple[int, str] | None":
+) -> tuple[int, str] | None:
     trigger_key = (trigger["day"], _minutes(trigger["time"]))
-    first: "tuple[tuple[int, int], str] | None" = None
+    first: tuple[tuple[int, int], str] | None = None
     base_eps = _read_episodes(baseline_dir)
     for key, activity in _read_episodes(intervention_dir).items():
         if base_eps.get(key) == activity:
@@ -424,7 +425,7 @@ def _first_divergent_tick(
     return (first[0][0], first[1]) if first else None
 
 
-def _read_episodes(run_dir: Path) -> dict["tuple[int, int, str]", str]:
+def _read_episodes(run_dir: Path) -> dict[tuple[int, int, str], str]:
     records: dict[tuple[int, int, str], str] = {}
     for path in sorted(Path(run_dir).glob("agent_*.jsonl")):
         if path.parent.name == "agent_state":

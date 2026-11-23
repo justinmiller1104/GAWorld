@@ -22,18 +22,18 @@ import math
 from benchmark.mcf.time_use import ScoreResult
 
 __all__ = [
+    "arch_compare",
     "assemble_error_vector",
     "average_across_seeds",
-    "pareto_frontier",
-    "arch_compare",
-    "tuning_limit",
-    "noise_domination",
-    "render_report",
-    "register_axis",
     "axes_from_names",
-    "paired_arch_stats",
-    "flat_dimensions",
     "bound_pressing",
+    "flat_dimensions",
+    "noise_domination",
+    "paired_arch_stats",
+    "pareto_frontier",
+    "register_axis",
+    "render_report",
+    "tuning_limit",
 ]
 
 # Axes registry (plan step 9): objective name → extractor over the
@@ -153,7 +153,7 @@ def _dominates(a: tuple, b: tuple) -> bool:
     Weak domination (strict on *all* components): points tied on one axis
     neither dominate nor exclude each other, so ties both survive on the front.
     """
-    return all(x < y for x, y in zip(a, b))
+    return all(x < y for x, y in zip(a, b, strict=False))
 
 
 def pareto_frontier(points, report: list[dict] | None = None) -> list[tuple]:
@@ -185,7 +185,7 @@ def pareto_frontier(points, report: list[dict] | None = None) -> list[tuple]:
                 )
             continue
         clean.append(components)
-    unique = sorted({p for p in clean})
+    unique = sorted(set(clean))
     front = [p for p in unique if not any(q != p and _dominates(q, p) for q in unique)]
     return sorted(front)
 
@@ -201,7 +201,7 @@ def arch_compare(frontier_m1, frontier_m0) -> list:
     # dominates it (better-or-equal on every axis, at least one strict) —
     # strict-on-all-axes (_dominates) would let ties on one axis through.
     def _weakly_dominates(q: tuple, p: tuple) -> bool:
-        return q != p and all(x <= y for x, y in zip(q, p))
+        return q != p and all(x <= y for x, y in zip(q, p, strict=False))
 
     m0 = [tuple(p) for p in frontier_m0]
     gain = [
@@ -263,7 +263,7 @@ def paired_arch_stats(
         # exact two-sided sign test over the non-tied differences
         if n_eff > 0:
             k = min(improvements, worsenings)
-            tail = sum(math.comb(n_eff, i) for i in range(0, k + 1)) / 2**n_eff
+            tail = sum(math.comb(n_eff, i) for i in range(k + 1)) / 2**n_eff
             p = min(1.0, 2 * tail)
         else:
             p = 1.0
@@ -452,11 +452,11 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
     points = [
         (avg["paid_work_error"], avg["leisure_social_error"])
         for avg in configs_out.values()
-        if not avg["paid_work_error"] != avg["paid_work_error"]  # drop NaN means
+        if avg["paid_work_error"] == avg["paid_work_error"]  # drop NaN means
     ]
     front = pareto_frontier(points)
     sorted_configs = sorted(configs_out, key=lambda c: configs_out[c]["paid_work_error"])
-    rest = [c for c in sorted_configs if c not in front]
+    _rest = [c for c in sorted_configs if c not in front]
     m0_points = [
         (configs_out[c]["paid_work_error"], configs_out[c]["leisure_social_error"])
         for c in sorted_configs
@@ -588,7 +588,7 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         "## Empirical limitations",
         "",
         f"- coverage gates: frontier_valid: {frontier_valid} — {gate_reason}",
-        f"- MIN_COMPARISON_DAYS=7, MIN_COMPARISON_POPULATION=20",
+        "- MIN_COMPARISON_DAYS=7, MIN_COMPARISON_POPULATION=20",
         f"- incomplete configs (missing legs, loud): {incomplete or 'none'}",
         f"- insensitive parameters (seed spread covers config range, tuning cannot "
         f"move them): {insensitive or 'none'}",

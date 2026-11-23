@@ -361,7 +361,7 @@ def ensure_sleep_in_schedule(agent: dict[str, Any], schedule: list[tuple[str, st
     # the pre-change dynamics.
     tail_label = next((a for _, a in schedule if is_sleep_activity(a)), None)
     if tail_label is not None and mcf_realism_enabled():
-        schedule = list(schedule) + [("00:00", tail_label)]
+        schedule = [*list(schedule), ("00:00", tail_label)]
         if first_morning_index is not None:
             schedule = [
                 slot

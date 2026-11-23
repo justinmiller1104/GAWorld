@@ -111,8 +111,7 @@ class TestSleepAccounting:
             "justified, but the 09:00–24:00 tail must NOT be silently credited to sleep"
         )
         assert minutes["unknown"] >= 840, (
-            f"the unobserved 09:00–24:00 span must land in unknown, got "
-            f"{minutes['unknown']} min"
+            f"the unobserved 09:00–24:00 span must land in unknown, got {minutes['unknown']} min"
         )
         assert sum(minutes.values()) == 1440
         result = m.score_against_targets({31: {1: minutes}}, employed_agents=[31])
@@ -148,8 +147,7 @@ class TestSleepAccounting:
         m = _mod()
         result = m.score_against_targets({}, employed_agents=[])
         assert result.uncertainty_warnings, (
-            "an empty comparison must warn that no agent-days were scored, "
-            "not return a silent zero error"
+            "an empty comparison must warn that no agent-days were scored, not return a silent zero error"
         )
 
 

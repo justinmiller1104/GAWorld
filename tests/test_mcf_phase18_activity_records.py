@@ -20,14 +20,11 @@ state by design. No LLM calls, no network, no simulation.
 
 from __future__ import annotations
 
-import pytest
-
 from benchmark.mcf.time_use import (
-    ActivityRecord,  # noqa: F401  (RED: missing API)
-    dedupe_activity_records,  # noqa: F401  (RED: missing API)
-    travel_category,  # noqa: F401  (RED: missing API)
+    ActivityRecord,
+    dedupe_activity_records,
+    travel_category,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. ActivityRecord schema
@@ -69,7 +66,14 @@ def test_activity_record_allows_explicit_unknown_category():
 
 
 def _rec(agent_id: int, category: str, start: int, end: int, source: str = "schedule_slot") -> ActivityRecord:
-    return ActivityRecord(run_id="r1", agent_id=agent_id, category=category, start_min=start, end_min=end, evidence_source=source)
+    return ActivityRecord(
+        run_id="r1",
+        agent_id=agent_id,
+        category=category,
+        start_min=start,
+        end_min=end,
+        evidence_source=source,
+    )
 
 
 def test_identical_overlapping_spans_are_deduplicated():
@@ -189,5 +193,5 @@ def test_no_fabricated_categories_from_empty_records():
     from benchmark.mcf.time_use import classify_activity_record
 
     empty = {"run_id": "r1", "agent_id": 4, "start_min": 600, "end_min": 660}
-    category, source = classify_activity_record(empty)
+    category, _source = classify_activity_record(empty)
     assert category == "unknown", "nothing classifiable means unknown, never invented sleep/work/leisure"

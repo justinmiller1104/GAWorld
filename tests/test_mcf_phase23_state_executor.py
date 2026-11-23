@@ -22,13 +22,11 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from gaworld.kernel import build_kernel
-
 from gaworld.kernel.policy_events import execute_policy_events
 
 # ---------------------------------------------------------------------------
@@ -149,8 +147,7 @@ def test_audit_record_carries_before_after(ctx, tmp_path):
     # And the execution is auditable with the true before/after values.
     audit = [r for r in rows if "before" in r and "after" in r]
     assert audit, (
-        "the executor must produce an audit record with before/after taken "
-        "from the agent's actual state dict"
+        "the executor must produce an audit record with before/after taken from the agent's actual state dict"
     )
     rec = audit[0]
     assert rec["before"] == pytest.approx(0.42), rec

@@ -26,8 +26,6 @@ import os
 import tempfile
 import unittest
 
-import pytest
-
 from gaworld.kernel import ActionRequest, build_kernel
 from gaworld.world import city_map as cm
 from gaworld.world.plugin import VenueCapacityPlugin
@@ -77,8 +75,11 @@ class _World:
         self.ctx.set_agents(self.agents)
         self.ctx.clock.advance("12:00", 0)
         self.ctx.bus.emit(
-            "on_time_tick", day=3, time_str="12:00",
-            city_map=self.ctx.extras["city_map"], agents=self.agents,
+            "on_time_tick",
+            day=3,
+            time_str="12:00",
+            city_map=self.ctx.extras["city_map"],
+            agents=self.agents,
         )
 
     def go(self, agent_id, to):
@@ -171,8 +172,7 @@ class RetrySemantics(unittest.TestCase):
         assert not v2.allowed
         denied = [r for r in w.rows("venue.admission") if r.get("outcome") == "denied"]
         assert len(denied) == 2, (
-            "per-request semantics: each retry is its own attempt row, "
-            f"got {len(denied)} denied rows"
+            f"per-request semantics: each retry is its own attempt row, got {len(denied)} denied rows"
         )
 
 

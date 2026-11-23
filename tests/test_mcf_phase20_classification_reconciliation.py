@@ -69,9 +69,7 @@ _DEPARTED_PURPOSE_UNKNOWN: dict = dict(
     travel={"mode": "bus", "status": "departed", "progress": 0.0},
 )
 
-_TRAVEL_PHRASE_NO_PURPOSE: dict = {
-    k: v for k, v in _PURPOSE_UNKNOWN_TRAVEL.items() if k != "travel"
-}
+_TRAVEL_PHRASE_NO_PURPOSE: dict = {k: v for k, v in _PURPOSE_UNKNOWN_TRAVEL.items() if k != "travel"}
 
 _VERIFIED_WORK_PURPOSE: dict = dict(
     _PURPOSE_UNKNOWN_TRAVEL,
@@ -84,6 +82,7 @@ _VERIFIED_WORK_PURPOSE: dict = dict(
 # 1. Unknown-purpose travel is NOT commuting on the episode scoring path.
 #    (Contradicts classify_episode time_use.py:351-352 / 356-357.)
 # ---------------------------------------------------------------------------
+
 
 def test_episode_in_transit_without_purpose_is_not_commuting():
     category, confidence = classify_episode(_PURPOSE_UNKNOWN_TRAVEL)
@@ -98,8 +97,7 @@ def test_episode_in_transit_without_purpose_is_not_commuting():
 def test_episode_departed_without_purpose_is_not_commuting():
     category, _ = classify_episode(_DEPARTED_PURPOSE_UNKNOWN)
     assert category != "commuting", (
-        f"departed purpose-unknown travel classified as {category!r}: same "
-        "contradiction, same rule"
+        f"departed purpose-unknown travel classified as {category!r}: same contradiction, same rule"
     )
 
 
@@ -117,6 +115,7 @@ def test_episode_travel_phrase_without_purpose_is_not_commuting():
 #    this — pinned so the unification cannot weaken it).
 # ---------------------------------------------------------------------------
 
+
 def test_record_verified_work_purpose_is_commuting():
     category, source = classify_activity_record(_VERIFIED_WORK_PURPOSE)
     assert category == "commuting" and source == "destination_purpose", (
@@ -128,8 +127,7 @@ def test_record_verified_work_purpose_is_commuting():
 def test_record_purpose_unknown_travel_is_plain_travel():
     category, source = classify_activity_record(_PURPOSE_UNKNOWN_TRAVEL)
     assert category == travel_category() and source == "travel_status", (
-        f"purpose-unknown travel classified {category!r}/{source!r}: it must "
-        f"stay plain {travel_category()!r}"
+        f"purpose-unknown travel classified {category!r}/{source!r}: it must stay plain {travel_category()!r}"
     )
 
 
@@ -146,6 +144,7 @@ def test_travel_category_is_distinct_from_commuting_in_survey_buckets():
 # ---------------------------------------------------------------------------
 # 3. Coverage never increases by relabelling uncertain travel.
 # ---------------------------------------------------------------------------
+
 
 def test_daily_minutes_do_not_credit_commuting_for_unknown_purpose_travel():
     daily = compute_daily_minutes([_PURPOSE_UNKNOWN_TRAVEL], tick_minutes=10)

@@ -59,9 +59,7 @@ def launch_mode_of(manifest):
     """
     mode = manifest.get("launch_mode")
     if mode not in VALID_LAUNCH_MODES:
-        raise ValueError(
-            f"manifest launch_mode must be one of {VALID_LAUNCH_MODES}, got {mode!r}"
-        )
+        raise ValueError(f"manifest launch_mode must be one of {VALID_LAUNCH_MODES}, got {mode!r}")
     return mode
 
 
@@ -74,9 +72,7 @@ def replay_block(manifest):
     block = manifest.get("replay")
     required = ("window", "events_total", "events_consumed", "mismatches")
     if not isinstance(block, dict) or any(key not in block for key in required):
-        raise ValueError(
-            f"replay block requires {required}, got {block!r}"
-        )
+        raise ValueError(f"replay block requires {required}, got {block!r}")
     return block
 
 

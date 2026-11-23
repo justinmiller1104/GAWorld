@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import os
-
 from typing import ClassVar
 
 import pytest
@@ -38,14 +37,13 @@ import pytest
 from gaworld.apps import mcf_api
 from gaworld.behavior.dynamic import (
     _ACTIVE_INTERRUPTS,
-    _apply_interrupt_cooldown,
     InterruptCandidate,
+    _apply_interrupt_cooldown,
 )
 from gaworld.memory import experience
 from gaworld.settings import CONFIG
 from gaworld.sim import _action
 from gaworld.sim._schedule import ensure_sleep_in_schedule
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -92,9 +90,7 @@ def test_h1a_extra_head_slot_gated(monkeypatch):
     # synthetic ("00:00", "睡前") head slot.
     out = ensure_sleep_in_schedule({"job": "职员"}, list(DAY_SCHEDULE_NO_HEAD))
     heads = [(t, a) for t, a in out if t == "00:00"]
-    assert heads == [], (
-        "default run must not append the extra 00:00 head slot; got %r" % (heads,)
-    )
+    assert heads == [], f"default run must not append the extra 00:00 head slot; got {heads!r}"
     # The old tail behaviour is preserved: a 睡前 slot still exists.
     assert any(a == "睡前" for _, a in out)
     # mcf_realism ON must still add head coverage.
@@ -112,15 +108,11 @@ def test_h1a_extra_head_slot_gated(monkeypatch):
 
 def test_h1b_head_slot_conversion_gated(monkeypatch):
     out = ensure_sleep_in_schedule({"job": "职员"}, list(NIGHT_HEAD_SCHEDULE))
-    assert ("00:00", "个人时间") in out, (
-        "default run must leave a non-sleep 00:00 head slot untouched"
-    )
+    assert ("00:00", "个人时间") in out, "default run must leave a non-sleep 00:00 head slot untouched"
     assert ("00:10", "技能提升") in out and ("00:20", "聊邻居停车") in out, (
         "default run must not drop pre-07:00 slots"
     )
-    assert not any(a == "睡觉" for _, a in out), (
-        "default run must not rewrite the head slot to 睡觉"
-    )
+    assert not any(a == "睡觉" for _, a in out), "default run must not rewrite the head slot to 睡觉"
     # mcf_realism ON: the conversion still fires.
     monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
     out_on = ensure_sleep_in_schedule({"job": "职员"}, list(NIGHT_HEAD_SCHEDULE))
@@ -161,9 +153,7 @@ def _exercise_spans(tmp_path):
 
 def test_h1c_activity_spans_gated(tmp_path, monkeypatch):
     path = _exercise_spans(tmp_path)
-    assert _span_rows(path) == [], (
-        "default run must not write {'kind':'span'} episode rows"
-    )
+    assert _span_rows(path) == [], "default run must not write {'kind':'span'} episode rows"
     # mcf_realism ON: explicit span rows are still written.
     monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
     path_on = _exercise_spans(tmp_path)
@@ -186,7 +176,8 @@ def test_h1d_actions_task_default_budget_not_overridden(monkeypatch):
         return "{}"
 
     monkeypatch.setattr(
-        _action, "_parse_action_space",
+        _action,
+        "_parse_action_space",
         lambda text, activities: {a: ["动作"] for a in activities},
     )
     monkeypatch.setattr(_action._llm_providers, "call_llm", fake_call_llm)
@@ -199,7 +190,7 @@ def test_h1d_actions_task_default_budget_not_overridden(monkeypatch):
         mt = call.get("max_tokens", "__absent__")
         assert mt in (None, "__absent__"), (
             "at the default action_space.max_tokens the provider budget must "
-            "not be overridden (got max_tokens=%r)" % (mt,)
+            f"not be overridden (got max_tokens={mt!r})"
         )
         assert call.get("task") == "actions"
 
@@ -317,11 +308,12 @@ def test_m1_pre_trigger_day_divergence_after_trigger_clock_time_is_pre(tmp_path)
     report = compare_arms(b_dir, i_dir, intervention_day=3, intervention_time="08:00")
     windows = report["windows"]
     assert windows["pre"]["max_abs_diff"] > 0, (
-        "divergence on a pre-trigger day must land in the pre window "
-        "(got pre=%r, post=%r)" % (windows["pre"], windows["post"])
+        "divergence on a pre-trigger day must land in the pre window (got pre={!r}, post={!r})".format(
+            windows["pre"], windows["post"]
+        )
     )
-    assert windows["post"]["max_abs_diff"] == 0, (
-        "post window must stay clean; got %r" % (windows["post"],)
+    assert windows["post"]["max_abs_diff"] == 0, "post window must stay clean; got {!r}".format(
+        windows["post"]
     )
 
     # Regression guard: the trigger tick itself (intervention day, at/after
@@ -331,9 +323,7 @@ def test_m1_pre_trigger_day_divergence_after_trigger_clock_time_is_pre(tmp_path)
     b_dir = _write_run(str(tmp_path / "b2"), baseline)
     i_dir = _write_run(str(tmp_path / "i2"), intervention)
     report = compare_arms(b_dir, i_dir, intervention_day=3, intervention_time="08:00")
-    assert report["windows"]["post"]["max_abs_diff"] > 0, (
-        "the trigger tick itself belongs to the post window"
-    )
+    assert report["windows"]["post"]["max_abs_diff"] > 0, "the trigger tick itself belongs to the post window"
 
 
 def test_m1_post_trigger_day_divergence_before_trigger_clock_time_is_post(tmp_path):
@@ -382,9 +372,10 @@ def test_m2_unreliable_arm_never_maps_to_no_effect():
     )
     assert verdict == {"verdict": "insufficient_data", "beneficial": False}
     # Regression guard: MISSING still maps to insufficient_data.
-    assert _effect_verdict(
-        {"baseline": "MISSING", "intervention": "ok"}, windows
-    )["verdict"] == "insufficient_data"
+    assert (
+        _effect_verdict({"baseline": "MISSING", "intervention": "ok"}, windows)["verdict"]
+        == "insufficient_data"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,35 +414,28 @@ def _plant_exp(tmp_path, rel_target: str, exp_id: str) -> str:
 def test_h4_load_exp_rejects_traversal_ids(mcf_env, tmp_path, exp_id):
     _plant_exp(tmp_path, exp_id, exp_id)
     assert mcf_api._load_exp(exp_id) is None, (
-        "exp_id %r must never resolve to a file outside output/mcf" % (exp_id,)
+        f"exp_id {exp_id!r} must never resolve to a file outside output/mcf"
     )
 
 
 def test_h4_get_rejects_traversal_id(mcf_env, tmp_path):
     _plant_exp(tmp_path, "..", "..")
     body, status = mcf_api.handle_get("/api/mcf/experiment/..", {})
-    assert 400 <= status < 500, (
-        "a traversal exp_id must be rejected with a 4xx; got %s: %r" % (status, body)
-    )
-    assert body.get("id") != "..", (
-        "a traversal id must never resolve to a file outside output/mcf"
-    )
+    assert 400 <= status < 500, f"a traversal exp_id must be rejected with a 4xx; got {status}: {body!r}"
+    assert body.get("id") != "..", "a traversal id must never resolve to a file outside output/mcf"
 
 
 def test_h4_launch_rejects_traversal_id(mcf_env, tmp_path):
     _plant_exp(tmp_path, "../../evil", "../../evil")
     body, status = mcf_api.launch_experiment("../../evil", {"confirm_cost": True})
     assert 400 <= status < 500, (
-        "a traversal exp_id must never launch (would write outside output/mcf); "
-        "got %s: %r" % (status, body)
+        f"a traversal exp_id must never launch (would write outside output/mcf); got {status}: {body!r}"
     )
 
 
 def test_h4_nested_id_rejected(mcf_env):
     body, status = mcf_api.handle_get("/api/mcf/experiment/a/b", {})
-    assert status == 400, (
-        "an exp_id containing '/' must be rejected; got %s: %r" % (status, body)
-    )
+    assert status == 400, f"an exp_id containing '/' must be rejected; got {status}: {body!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +480,7 @@ def test_m5_double_launch_is_atomic(mcf_env, monkeypatch):
 
     monkeypatch.setattr(mcf_api, "_save_exp", interleaved_save)
 
-    first_body, first_status = mcf_api.handle_post(
+    _first_body, first_status = mcf_api.handle_post(
         f"/api/mcf/experiment/{exp_id}/launch", {"confirm_cost": True}
     )
     second_body, second_status = second.get("result", ({}, None))
@@ -504,7 +488,7 @@ def test_m5_double_launch_is_atomic(mcf_env, monkeypatch):
     statuses = sorted([first_status, second_status])
     assert statuses == [202, 409], (
         "two concurrent launches of the same experiment must yield exactly one "
-        "202 and one 409; got %s and %s (%r)" % (first_status, second_status, second_body)
+        f"202 and one 409; got {first_status} and {second_status} ({second_body!r})"
     )
 
 
@@ -534,8 +518,7 @@ def test_m4_bad_int_types_yield_400(mcf_env, field, value):
     }
     body, status = mcf_api.handle_post("/api/mcf/experiment", spec)
     assert status == 400, (
-        f"a non-integer {field} must be rejected with 400, not blow up with 500; "
-        f"got {status}: {body!r}"
+        f"a non-integer {field} must be rejected with 400, not blow up with 500; got {status}: {body!r}"
     )
     assert field.replace("budget.", "") in str(body.get("error", "")) or "integer" in str(
         body.get("error", "")
@@ -573,8 +556,14 @@ def test_m6_day_matching_is_type_coerced():
         controller = _Controller()
         recorder = None
 
-    event = {"name": "e", "day": "3", "time": "08:00", "operation": "set_agent_state",
-             "targets": [7], "kwargs": {"mood": "calm"}}
+    event = {
+        "name": "e",
+        "day": "3",
+        "time": "08:00",
+        "operation": "set_agent_state",
+        "targets": [7],
+        "kwargs": {"mood": "calm"},
+    }
 
     # A string "3" in the spec and int 3 from the tick loop are the same day.
     assert execute_policy_events(_Ctx(), [event], 3, "08:00") == 1

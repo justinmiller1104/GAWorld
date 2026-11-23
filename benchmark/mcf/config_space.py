@@ -107,9 +107,7 @@ def validate_arch_patch(patch: dict[str, Any]) -> dict[str, Any]:
     nested: dict[str, Any] = {}
     for path, value in patch.items():
         if path in ARCH_RESERVED_PATHS:
-            raise ValueError(
-                f"{path} is a Θ parameter; vary it in the sampled bands, not the architecture"
-            )
+            raise ValueError(f"{path} is a Θ parameter; vary it in the sampled bands, not the architecture")
         nested.update(patch_for(path, value))
     return nested
 

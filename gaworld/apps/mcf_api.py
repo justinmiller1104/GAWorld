@@ -66,7 +66,6 @@ def _int_or_none(value: Any, label: str) -> tuple[int | None, str | None]:
         return None, f"{label} must be an integer"
 
 
-
 def _mcf_root() -> str:
     return os.path.join(world_paths.REPO_ROOT, "output", "mcf")
 
@@ -126,8 +125,8 @@ def meta() -> dict[str, Any]:
     Everything here is read from real code constants (benchmark.mcf.time_use,
     benchmark.mcf.frontier, benchmark.mcf.config_space) — nothing invented.
     """
-    from benchmark.mcf import time_use as tu
     from benchmark.mcf import frontier
+    from benchmark.mcf import time_use as tu
 
     objectives = []
     for key in frontier._DEFAULT_AXES:
@@ -473,9 +472,13 @@ def _build_harness(exp: dict[str, Any]):
                 "sample_seed": exp["population"].get("sample_seed"),
             }
         except Exception as exc:  # unknown city changed on disk -> fail honestly at launch
-            raise ValueError(f"population for city {exp.get('population', {}).get('city')!r} cannot be resolved: {exc}") from None
+            raise ValueError(
+                f"population for city {exp.get('population', {}).get('city')!r} cannot be resolved: {exc}"
+            ) from None
     return make_leg_harness(
-        limits=limits or None, stub=_is_stub(exp), model_info=dict(exp.get("model") or {}),
+        limits=limits or None,
+        stub=_is_stub(exp),
+        model_info=dict(exp.get("model") or {}),
         sim_context=sim_context,
     )
 
@@ -941,7 +944,7 @@ def handle_get(path: str, query: dict) -> tuple[dict[str, Any], int]:
         creation path uses — identical random sampling, identical employment
         derivation."""
         try:
-            from benchmark.mcf.population import resolve_population, PopulationError
+            from benchmark.mcf.population import PopulationError, resolve_population
 
             flat_query = {
                 key: (value[0] if isinstance(value, list) and value else value)

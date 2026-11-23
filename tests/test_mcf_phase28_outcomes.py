@@ -30,12 +30,36 @@ def _mod():
 
 def _admission_rows():
     return [
-        {"agent_id": 1, "to": "ShopA", "outcome": "admitted", "capacity": 2,
-         "occupancy": 1, "agents_represent": 1.0, "_day": 1, "_time": "09:00"},
-        {"agent_id": 2, "to": "ShopA", "outcome": "redirected", "capacity": 1,
-         "occupancy": 1, "agents_represent": 1.0, "_day": 1, "_time": "09:10"},
-        {"agent_id": 3, "to": "ShopA", "outcome": "denied", "capacity": 1,
-         "occupancy": 1, "agents_represent": 1.0, "_day": 1, "_time": "09:20"},
+        {
+            "agent_id": 1,
+            "to": "ShopA",
+            "outcome": "admitted",
+            "capacity": 2,
+            "occupancy": 1,
+            "agents_represent": 1.0,
+            "_day": 1,
+            "_time": "09:00",
+        },
+        {
+            "agent_id": 2,
+            "to": "ShopA",
+            "outcome": "redirected",
+            "capacity": 1,
+            "occupancy": 1,
+            "agents_represent": 1.0,
+            "_day": 1,
+            "_time": "09:10",
+        },
+        {
+            "agent_id": 3,
+            "to": "ShopA",
+            "outcome": "denied",
+            "capacity": 1,
+            "occupancy": 1,
+            "agents_represent": 1.0,
+            "_day": 1,
+            "_time": "09:20",
+        },
     ]
 
 
@@ -106,12 +130,33 @@ class TestTravelMetrics:
 class TestOccupancyCongestion:
     def test_peak_occupancy_from_admission_rows(self):
         rows = [
-            {"agent_id": 1, "to": "ShopA", "outcome": "admitted", "occupancy": 1,
-             "capacity": 3, "_day": 1, "_time": "09:00"},
-            {"agent_id": 2, "to": "ShopA", "outcome": "admitted", "occupancy": 2,
-             "capacity": 3, "_day": 1, "_time": "10:00"},
-            {"agent_id": 3, "to": "ShopB", "outcome": "denied", "occupancy": 3,
-             "capacity": 3, "_day": 1, "_time": "11:00"},
+            {
+                "agent_id": 1,
+                "to": "ShopA",
+                "outcome": "admitted",
+                "occupancy": 1,
+                "capacity": 3,
+                "_day": 1,
+                "_time": "09:00",
+            },
+            {
+                "agent_id": 2,
+                "to": "ShopA",
+                "outcome": "admitted",
+                "occupancy": 2,
+                "capacity": 3,
+                "_day": 1,
+                "_time": "10:00",
+            },
+            {
+                "agent_id": 3,
+                "to": "ShopB",
+                "outcome": "denied",
+                "occupancy": 3,
+                "capacity": 3,
+                "_day": 1,
+                "_time": "11:00",
+            },
         ]
         s = _mod().summarize({"venue.admission": rows})
         assert s["congestion"]["peak_occupancy"]["ShopA"] == 2
@@ -127,10 +172,7 @@ class TestHonestyInvariants:
         for key, value in s.items():
             if key == "admission":
                 continue  # checked elsewhere
-            if isinstance(value, dict):
-                values = value.values()
-            else:
-                values = [value]
+            values = value.values() if isinstance(value, dict) else [value]
             for v in values:
                 assert v == NOT_MEASURED or isinstance(v, (int, float)), (key, v)
 

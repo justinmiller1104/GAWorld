@@ -25,9 +25,9 @@ from gaworld.city.bundle import CityNotFoundError, resolve_city
 __all__ = [
     "PopulationError",
     "city_roster",
-    "resolve_population",
-    "random_sample",
     "config_overrides_for",
+    "random_sample",
+    "resolve_population",
 ]
 
 EMPLOYED_VALUE = "employed"
@@ -40,7 +40,7 @@ class PopulationError(ValueError):
 def _bundle(city: str) -> Any:
     try:
         return resolve_city(city)
-    except CityNotFoundError as exc:
+    except CityNotFoundError:
         raise PopulationError(f"unknown city: {city!r}") from None
 
 
@@ -72,9 +72,7 @@ def city_roster(city: str) -> list[dict[str, Any]]:
 def random_sample(ids: list[int], size: int, seed: int) -> list[int]:
     """Reproducible sample WITHOUT replacement from the complete id list."""
     if size > len(ids):
-        raise PopulationError(
-            f"sample size {size} exceeds the city population ({len(ids)} residents)"
-        )
+        raise PopulationError(f"sample size {size} exceeds the city population ({len(ids)} residents)")
     rng = random.Random(seed)
     return sorted(rng.sample(list(ids), size))
 

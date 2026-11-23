@@ -21,7 +21,7 @@ from pathlib import Path
 
 from benchmark.mcf.time_use import MIN_COMPARISON_DAYS, MIN_COMPARISON_POPULATION, score_directory
 
-__all__ = ["compare_arms", "compare_repeated_runs", "time_to_minute", "NEUTRAL_VERDICTS"]
+__all__ = ["NEUTRAL_VERDICTS", "compare_arms", "compare_repeated_runs", "time_to_minute"]
 
 
 def time_to_minute(time_str):
@@ -155,7 +155,9 @@ def compare_repeated_runs(baseline_dirs, intervention_dirs, intervention_day):
     the spread across runs — variation is reported alongside the mean
     differences, never collapsed into a single number.
     """
-    reports = [compare_arms(b, i, intervention_day) for b, i in zip(baseline_dirs, intervention_dirs)]
+    reports = [
+        compare_arms(b, i, intervention_day) for b, i in zip(baseline_dirs, intervention_dirs, strict=False)
+    ]
     report = dict(reports[0])
     per_run = [r["windows"]["post"]["max_abs_diff"] for r in reports]
     report["variation"] = {

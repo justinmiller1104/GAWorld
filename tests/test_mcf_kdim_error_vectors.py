@@ -15,7 +15,9 @@ from benchmark.mcf import frontier
 
 THREE_AXES = {
     "paid_work_error": lambda pc: float(pc["paid_work"]["error"]),
-    "leisure_social_error": lambda pc: (float(pc["leisure"]["error"]) + float(pc["socializing"]["error"])) / 2.0,
+    "leisure_social_error": lambda pc: (
+        (float(pc["leisure"]["error"]) + float(pc["socializing"]["error"])) / 2.0
+    ),
     "sleep_error": lambda pc: float(pc["sleep"]["error"]),
 }
 

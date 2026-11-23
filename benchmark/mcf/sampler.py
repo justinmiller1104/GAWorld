@@ -15,7 +15,8 @@ recommended in the docs). Sampling only ever touches the bands handed in —
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 __all__ = ["sample"]
 
@@ -47,8 +48,8 @@ def sample(n: int, bands: Sequence[dict[str, Any]], seed: int = 0) -> list[list[
     candidates = _draw(n * 2, len(bands), seed)  # headroom for filtered edge hits
     points = []
     for row in candidates:
-        values = [b["low"] + u * (b["high"] - b["low"]) for u, b in zip(row, bands)]
-        if all(b["low"] < v < b["high"] for v, b in zip(values, bands)):
+        values = [b["low"] + u * (b["high"] - b["low"]) for u, b in zip(row, bands, strict=False)]
+        if all(b["low"] < v < b["high"] for v, b in zip(values, bands, strict=False)):
             points.append(values)
             if len(points) == n:
                 break
@@ -56,8 +57,8 @@ def sample(n: int, bands: Sequence[dict[str, Any]], seed: int = 0) -> list[list[
         offset = len(candidates)
         while len(points) < n:
             for row in _draw(n * 2, len(bands), seed + offset):
-                values = [b["low"] + u * (b["high"] - b["low"]) for u, b in zip(row, bands)]
-                if all(b["low"] < v < b["high"] for v, b in zip(values, bands)):
+                values = [b["low"] + u * (b["high"] - b["low"]) for u, b in zip(row, bands, strict=False)]
+                if all(b["low"] < v < b["high"] for v, b in zip(values, bands, strict=False)):
                     points.append(values)
                     if len(points) == n:
                         break

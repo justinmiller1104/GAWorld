@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from benchmark.mcf import manifest
 
 EXP = {
@@ -112,7 +110,13 @@ def test_manifest_incomplete_leg_honesty():
     assert len(bad) == 1
     assert bad[0]["stop_reason"] == "budget exhausted"
     assert m["failures"] == [
-        {"arch": "m0", "config_id": "cfglow", "seed": 11, "status": "failed", "stop_reason": "budget exhausted"}
+        {
+            "arch": "m0",
+            "config_id": "cfglow",
+            "seed": 11,
+            "status": "failed",
+            "stop_reason": "budget exhausted",
+        }
     ]
 
 

@@ -39,17 +39,14 @@ def execute_policy_events(ctx, events, day, time_str) -> int:
             continue
         if operation not in _SUPPORTED:
             raise ValueError(
-                f"policy_events operation {operation!r} is not supported; "
-                f"supported: {sorted(_SUPPORTED)}"
+                f"policy_events operation {operation!r} is not supported; supported: {sorted(_SUPPORTED)}"
             )
         for agent_id in event.get("targets", []):
             for field, value in (event.get("kwargs") or {}).items():
                 agent = ctx.agents_by_id.get(agent_id)
                 state = agent.get("state", {}) if agent else {}
                 before = state.get(field)
-                result = ctx.controller.intervene(
-                    operation, ctx, agent_id=agent_id, key=field, value=value
-                )
+                result = ctx.controller.intervene(operation, ctx, agent_id=agent_id, key=field, value=value)
                 after = ctx.agents_by_id.get(agent_id, {}).get("state", {}).get(field)
                 if ctx.recorder is not None:
                     ctx.recorder.record(

@@ -35,7 +35,7 @@ Deterministic only: no LLM, no network.
 
 from __future__ import annotations
 
-from benchmark.mcf.time_use import travel_category, classify_activity_record
+from benchmark.mcf.time_use import classify_activity_record, travel_category
 
 # Real episode shape from the dry run of record (agent 15, 00:10 — a work
 # trip with a machine-readable purpose nested in travel).

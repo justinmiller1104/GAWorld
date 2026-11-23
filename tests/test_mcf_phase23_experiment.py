@@ -54,11 +54,11 @@ from pathlib import Path
 import pytest
 
 from benchmark.mcf.compare import NEUTRAL_VERDICTS, compare_arms
-from benchmark.mcf.interventions import InterventionSpecError, apply_intervention, validate_intervention_spec
 
 # RED: the runner/audit glue does not exist yet — everything below fails with
 # ModuleNotFoundError until benchmark/mcf/experiment.py is written.
-from benchmark.mcf.experiment import run_experiment  # noqa: E402
+from benchmark.mcf.experiment import run_experiment
+from benchmark.mcf.interventions import InterventionSpecError, apply_intervention, validate_intervention_spec
 
 # ---------------------------------------------------------------------------
 # Deterministic zero-inference dry harness (stands in for the Phase 2.1
@@ -113,14 +113,19 @@ class DryHarness:
         episodes_written = 0
         for day in range(1, sim_days + 1):
             for idx, time_str in enumerate(TICK_TIMES):
-                if self.truncate_at_tick is not None and (day - 1) * len(TICK_TIMES) + idx >= self.truncate_at_tick:
+                if (
+                    self.truncate_at_tick is not None
+                    and (day - 1) * len(TICK_TIMES) + idx >= self.truncate_at_tick
+                ):
                     break
                 marker = self._active_marker(events, day, time_str)
                 for agent_id in agent_ids:
                     activity = f"routine_{self._slot(time_str)}"
                     if marker is not None:
                         activity = f"responsive_{marker}"
-                    self._append_episode(run_dir / f"agent_{agent_id}.jsonl", agent_id, day, time_str, activity)
+                    self._append_episode(
+                        run_dir / f"agent_{agent_id}.jsonl", agent_id, day, time_str, activity
+                    )
                     episodes_written += 1
                 for event in events:
                     if self._is_state_event(event) and (event["day"], _minutes(event["time"])) == (
@@ -160,9 +165,12 @@ class DryHarness:
         now = (day, _minutes(time_str))
         for event in events:
             kwargs = event.get("kwargs", {})
-            if "marker" in kwargs and not ("agent_id" in kwargs and "metric" in kwargs):
-                if now >= (event["day"], _minutes(event["time"])):
-                    return kwargs["marker"]
+            if (
+                "marker" in kwargs
+                and not ("agent_id" in kwargs and "metric" in kwargs)
+                and now >= (event["day"], _minutes(event["time"]))
+            ):
+                return kwargs["marker"]
         return None
 
     def _apply_state(self, agent_id, event, day, time_str):
@@ -270,7 +278,9 @@ NEUTRAL_SPEC = {
 
 
 def test_two_real_dry_run_arms_with_independent_dirs_and_zero_llm(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path
+    )
     base_arm, int_arm = result["baseline"], result["intervention"]
     assert Path(base_arm["run_dir"]) != Path(int_arm["run_dir"])
     for arm in (base_arm, int_arm):
@@ -292,14 +302,18 @@ def test_two_real_dry_run_arms_with_independent_dirs_and_zero_llm(tmp_path):
 
 
 def test_audit_record_captures_intended_vs_actual_execution(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path
+    )
     audit = result["intervention"]["audit"]
     assert len(audit) == 1
     rec = audit[0]
     assert rec["name"] == SET_AGENT_STATE_SPEC["name"]
     assert rec["operation"] == "set_agent_state"
     assert rec["intended_time"] == {"day": 2, "time": "10:00"}
-    assert rec["actual_time"] == {"day": 2, "time": "10:00"}, "actual time must come from the run's own records"
+    assert rec["actual_time"] == {"day": 2, "time": "10:00"}, (
+        "actual time must come from the run's own records"
+    )
     assert rec["targets"] == [7]
     assert rec["requested"] == {"metric": "emotion", "value": 0.95}
     assert rec["applied"] is True
@@ -326,7 +340,9 @@ def test_trigger_that_never_fires_is_not_applied_not_success(tmp_path):
 
 
 def test_baseline_arm_is_pure_no_delta_no_audit(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path
+    )
     base_arm, int_arm = result["baseline"], result["intervention"]
     assert base_arm["audit"] == [], "baseline arm must audit no intervention"
     base_cfg = json.loads((Path(base_arm["run_dir"]) / "config.json").read_text(encoding="utf-8"))
@@ -341,7 +357,9 @@ def test_baseline_arm_is_pure_no_delta_no_audit(tmp_path):
 
 
 def test_no_effect_before_trigger_effect_at_and_after(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path
+    )
     base_eps = _read_episodes(result["baseline"]["run_dir"])
     int_eps = _read_episodes(result["intervention"]["run_dir"])
     trigger = (2, _minutes("10:00"))
@@ -361,7 +379,9 @@ def test_no_effect_before_trigger_effect_at_and_after(tmp_path):
 
 
 def test_targeted_agent_changed_untargeted_untouched(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path
+    )
     int_dir = Path(result["intervention"]["run_dir"])
     state_7 = _read_jsonl(int_dir / "agent_state" / "agent_7.jsonl")
     assert state_7, "targeted agent must have state records"
@@ -381,7 +401,9 @@ def test_targeted_agent_changed_untargeted_untouched(tmp_path):
 
 
 def test_neutral_control_yields_exactly_zero_difference(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(NEUTRAL_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(NEUTRAL_SPEC), DryHarness(), run_root=tmp_path
+    )
     report = result["comparison"]
     for day, diff in report["per_day"].items():
         assert diff["max_abs_diff"] == 0.0, f"identity delta must change nothing on day {day}"
@@ -420,7 +442,9 @@ def test_failed_op_reported_with_reason(tmp_path):
     ids=["no_final_manifest", "truncated_episodes"],
 )
 def test_incomplete_arm_reported_and_outcomes_missing(tmp_path, harness):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), harness, run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), harness, run_root=tmp_path
+    )
     int_arm = result["intervention"]
     assert int_arm["complete"] is False, "interrupted arm must be reported incomplete"
     manifest = json.loads((Path(int_arm["run_dir"]) / "run_manifest.json").read_text(encoding="utf-8"))
@@ -437,24 +461,30 @@ def test_incomplete_arm_reported_and_outcomes_missing(tmp_path, harness):
 
 
 def test_comparison_matches_direct_episode_diff(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path
+    )
     report = result["comparison"]
     # cross-check against compare_arms run on the very same on-disk dirs
-    direct = compare_arms(result["baseline"]["run_dir"], result["intervention"]["run_dir"], intervention_day=2)
+    direct = compare_arms(
+        result["baseline"]["run_dir"], result["intervention"]["run_dir"], intervention_day=2
+    )
     assert report["per_day"] == direct["per_day"]
     base_eps = _read_episodes(result["baseline"]["run_dir"])
     int_eps = _read_episodes(result["intervention"]["run_dir"])
-    day2_mismatch = sum(
-        1
-        for k in base_eps
-        if k[1] == 2 and base_eps[k] != int_eps[k]
+    day2_mismatch = sum(1 for k in base_eps if k[1] == 2 and base_eps[k] != int_eps[k])
+    assert report["per_day"][2]["max_abs_diff"] == pytest.approx(
+        day2_mismatch / len(base_eps) if day2_mismatch else 0.0
     )
-    assert report["per_day"][2]["max_abs_diff"] == pytest.approx(day2_mismatch / len(base_eps) if day2_mismatch else 0.0)
 
 
 def test_identical_inputs_identical_report(tmp_path):
-    r1 = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path / "a")
-    r2 = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path / "b")
+    r1 = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path / "a"
+    )
+    r2 = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(POLICY_EVENT_SPEC), DryHarness(), run_root=tmp_path / "b"
+    )
 
     def _strip(report):
         report = copy.deepcopy(report)
@@ -473,7 +503,9 @@ def test_identical_inputs_identical_report(tmp_path):
 
 
 def test_set_agent_state_translates_to_policy_event_entry(tmp_path):
-    result = run_experiment(copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path)
+    result = run_experiment(
+        copy.deepcopy(BASE_CONFIG), copy.deepcopy(SET_AGENT_STATE_SPEC), DryHarness(), run_root=tmp_path
+    )
     cfg = json.loads((Path(result["intervention"]["run_dir"]) / "config.json").read_text(encoding="utf-8"))
     events = [e for e in cfg.get("policy_events", []) if e.get("name") == SET_AGENT_STATE_SPEC["name"]]
     assert events, "set_agent_state must translate into a policy_events entry the sim matches per tick"
@@ -491,7 +523,9 @@ def test_update_config_translates_to_config_delta(tmp_path):
         "targets": ["env"],
     }
     result = run_experiment(copy.deepcopy(BASE_CONFIG), spec, DryHarness(), run_root=tmp_path)
-    int_cfg = json.loads((Path(result["intervention"]["run_dir"]) / "config.json").read_text(encoding="utf-8"))
+    int_cfg = json.loads(
+        (Path(result["intervention"]["run_dir"]) / "config.json").read_text(encoding="utf-8")
+    )
     assert int_cfg.get("test", {}).get("marker") == "rain", "update_config must land as a real config delta"
     base_cfg = json.loads((Path(result["baseline"]["run_dir"]) / "config.json").read_text(encoding="utf-8"))
     assert "test" not in base_cfg
@@ -502,7 +536,9 @@ def test_unsupported_operation_rejected_before_any_run_dir(tmp_path):
     spec["operation"] = "add_agent"  # unimplemented in the kernel
     with pytest.raises(InterventionSpecError, match="operation"):
         run_experiment(copy.deepcopy(BASE_CONFIG), spec, DryHarness(), run_root=tmp_path)
-    assert not list(Path(tmp_path).rglob("run_manifest.json")), "no run dirs may be created for an invalid spec"
+    assert not list(Path(tmp_path).rglob("run_manifest.json")), (
+        "no run dirs may be created for an invalid spec"
+    )
 
 
 # ---------------------------------------------------------------------------

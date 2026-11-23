@@ -20,18 +20,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from benchmark.mcf.launch import (
-    create_run,  # noqa: F401  (RED: missing API)
-    finalize_run,  # noqa: F401  (RED: missing API)
-    validate_observation_window,  # noqa: F401  (RED: missing API)
+    create_run,
+    finalize_run,
+    validate_observation_window,
 )
-
 
 # Regression fixture: the real interrupted-run manifest from the Phase 1.6
 # pilot16 run (20261109_133955, outcome in_progress, finished_at "").
-PARTIAL_MANIFEST = Path(__file__).parent / "fixtures" / "pilot16" / "run_manifest_20261109_133955.partial.json"
+PARTIAL_MANIFEST = (
+    Path(__file__).parent / "fixtures" / "pilot16" / "run_manifest_20261109_133955.partial.json"
+)
 
 
 def _fake_llm():
@@ -80,7 +79,6 @@ def test_second_run_does_not_append_to_first_runs_episode_files(tmp_path: Path):
         (run_b.run_dir / "episodes_agent_4.jsonl").write_text(
             json.dumps({"day": 1, "time": "09:00"}) + "\n", encoding="utf-8"
         )
-        pass
     first = (run_a.run_dir / "episodes_agent_4.jsonl").read_text(encoding="utf-8")
     assert first.count("\n") == 1, "run B must not append into run A's episode file"
 
@@ -132,8 +130,7 @@ def test_subsequent_run_cannot_contaminate_interrupted_runs_directory(tmp_path: 
         # Simulate an interruption: no finalize_run, context exited early.
     with create_run(tmp_path, config={"sim_days": 1}) as following:
         (following.run_dir / "episodes_agent_4.jsonl").write_text(
-            json.dumps({"day": 1, "time": "08:00"}) + "\n"
-            + json.dumps({"day": 1, "time": "08:10"}) + "\n",
+            json.dumps({"day": 1, "time": "08:00"}) + "\n" + json.dumps({"day": 1, "time": "08:10"}) + "\n",
             encoding="utf-8",
         )
     still = (interrupted.run_dir / "episodes_agent_4.jsonl").read_text(encoding="utf-8")

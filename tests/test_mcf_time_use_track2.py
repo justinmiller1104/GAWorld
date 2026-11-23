@@ -23,11 +23,11 @@ import pytest
 from benchmark.mcf.time_use import (
     classify_activity,
     classify_episode,
-    travel_category,
     compute_daily_minutes,
     coverage,
     load_episodes,
     split_run_segments,
+    travel_category,
 )
 
 # ---------------------------------------------------------------------------
@@ -216,9 +216,20 @@ def test_travel_ticks_attribute_commuting_minutes_not_the_stale_label():
     # dwell is unknown.
     eps = [
         _fixture_a(),
-        _fixture_a() | {"time": "00:20", "travel": dict(_fixture_a()["travel"], status="in_transit", progress=0.54)},  # type: ignore[arg-type]
-        _fixture_a() | {"time": "00:30", "travel": dict(_fixture_a()["travel"], status="arrived", progress=1.0), "action": "在商场里看看"},  # type: ignore[arg-type]
-        _fixture_a() | {"time": "00:50", "travel": dict(_fixture_a()["travel"], status="stationary", progress=1.0), "action": "在商场里看看"},  # type: ignore[arg-type]
+        _fixture_a()
+        | {"time": "00:20", "travel": dict(_fixture_a()["travel"], status="in_transit", progress=0.54)},  # type: ignore[arg-type]
+        _fixture_a()
+        | {
+            "time": "00:30",
+            "travel": dict(_fixture_a()["travel"], status="arrived", progress=1.0),
+            "action": "在商场里看看",
+        },  # type: ignore[arg-type]
+        _fixture_a()
+        | {
+            "time": "00:50",
+            "travel": dict(_fixture_a()["travel"], status="stationary", progress=1.0),
+            "action": "在商场里看看",
+        },  # type: ignore[arg-type]
     ]
     minutes = compute_daily_minutes(eps, tick_minutes=10)[0][1]
     # 00:00->00:20 same category: gap kept (20); 00:20->00:30 within 2*tick

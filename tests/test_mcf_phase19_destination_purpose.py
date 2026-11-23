@@ -97,9 +97,7 @@ def test_purpose_is_snake_case_category_the_classifier_accepts():
     agent = _agent()
     movement = move_agent(agent, "Gamma", "上班", "08:00", 1, _mini_map())
     purpose = movement["travel"]["destination_purpose"]
-    assert re.match(r"^[a-z_]+$", str(purpose)), (
-        f"purpose {purpose!r} is not a snake_case category token"
-    )
+    assert re.match(r"^[a-z_]+$", str(purpose)), f"purpose {purpose!r} is not a snake_case category token"
     assert purpose in CATEGORIES, f"purpose {purpose!r} is not a known activity category"
 
 
@@ -118,8 +116,7 @@ def test_in_transit_records_carry_the_field_too():
         f"in-transit travel dict dropped destination_purpose: keys={sorted(travel)}"
     )
     assert travel["destination_purpose"] == WORK_PURPOSE, (
-        f"in-transit purpose must match the departure purpose, got "
-        f"{travel['destination_purpose']!r}"
+        f"in-transit purpose must match the departure purpose, got {travel['destination_purpose']!r}"
     )
 
 
@@ -177,8 +174,7 @@ def test_non_work_purpose_in_transit_is_travel_not_commuting():
     for purpose in NON_WORK_PURPOSES:
         category, _ = classify_activity_record(_in_transit_record(purpose))
         assert category == "travel", (
-            f"purpose {purpose!r} is not work-related; in-transit travel must stay "
-            f"'travel', got {category!r}"
+            f"purpose {purpose!r} is not work-related; in-transit travel must stay 'travel', got {category!r}"
         )
 
 
@@ -186,6 +182,4 @@ def test_null_purpose_in_transit_is_travel_not_commuting():
     from benchmark.mcf.time_use import classify_activity_record
 
     category, _ = classify_activity_record(_in_transit_record(None))
-    assert category == "travel", (
-        f"explicit-null purpose must never promote to commuting, got {category!r}"
-    )
+    assert category == "travel", f"explicit-null purpose must never promote to commuting, got {category!r}"

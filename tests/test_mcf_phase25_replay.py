@@ -36,7 +36,13 @@ def _stub_llm(response="LIVE"):
 
     def llm(prompt, task=None, agent_id=None, system=None, temperature=None, **kwargs):
         calls.append(
-            {"prompt": prompt, "task": task, "agent_id": agent_id, "system": system, "temperature": temperature}
+            {
+                "prompt": prompt,
+                "task": task,
+                "agent_id": agent_id,
+                "system": system,
+                "temperature": temperature,
+            }
         )
         return response
 
@@ -51,7 +57,7 @@ def _stub_llm(response="LIVE"):
 
 def test_install_rebinds_module_attribute_and_restores():
     original = providers.call_llm
-    replay, restore = install_llm_replay({})
+    _replay, restore = install_llm_replay({})
     try:
         assert providers.call_llm is not original, "install must rebind providers.call_llm (canary seam)"
     finally:
@@ -82,13 +88,15 @@ def test_cache_hit_returns_recorded_response_without_live_call():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("field,value", [("task", "memory"), ("agent_id", 5), ("system", "other"), ("temperature", 0.0)])
+@pytest.mark.parametrize(
+    "field,value", [("task", "memory"), ("agent_id", 5), ("system", "other"), ("temperature", 0.0)]
+)
 def test_differing_key_component_is_not_a_hit(field, value):
     """A request differing in ONE component must not be answered from
     another call's record (it is a miss → loud, contract 4)."""
     key = ("act", 4, "sys", 0.7, "prompt-1")
     recorded = {key: "RECORDED"}
-    kwargs = dict(task=key[0], agent_id=key[1], system=key[2], temperature=key[3])
+    kwargs = {"task": key[0], "agent_id": key[1], "system": key[2], "temperature": key[3]}
     kwargs[field] = value
     replay, restore = install_llm_replay(recorded, base_llm=_stub_llm("LIVE"))
     try:
@@ -126,9 +134,9 @@ def test_cache_miss_raises_loudly_before_stop():
 def test_rebound_module_attribute_also_misses_loudly():
     """After installation the MODULE attribute itself must enforce the
     miss (that is the seam every kernel path dispatches through)."""
-    original = providers.call_llm
+    _original = providers.call_llm
     base = _stub_llm("LIVE")
-    replay, restore = install_llm_replay({}, base_llm=base)
+    _replay, restore = install_llm_replay({}, base_llm=base)
     try:
         with pytest.raises(ReplayCacheMiss):
             providers.call_llm("unrecorded prompt", task="act", agent_id=4, system="sys", temperature=0.7)
@@ -159,7 +167,9 @@ def test_past_stop_predicate_falls_through_to_live_llm():
         assert replay(key[4], task=key[0], agent_id=key[1], system=key[2], temperature=key[3]) == "RECORDED"
         assert base.calls == []
         # past the trigger: live, even for an identical (recorded) request
-        result = providers.call_llm(key[4], task=key[0], agent_id=key[1], system=key[2], temperature=key[3], trigger_tick=600)
+        result = providers.call_llm(
+            key[4], task=key[0], agent_id=key[1], system=key[2], temperature=key[3], trigger_tick=600
+        )
         assert result == "LIVE"
         assert len(base.calls) == 1
     finally:

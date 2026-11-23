@@ -60,9 +60,11 @@ def _destination_changes(tables):
 def _travel_metrics(tables):
     movement = tables.get("movement")
     if not movement:
-        return {"travel_minutes": NOT_MEASURED,
-                "minutes_travelling": NOT_MEASURED,
-                "minutes_participating": NOT_MEASURED}
+        return {
+            "travel_minutes": NOT_MEASURED,
+            "minutes_travelling": NOT_MEASURED,
+            "minutes_participating": NOT_MEASURED,
+        }
     travel = 0.0
     participating = 0.0
     open_trip = None  # (day, time) of a departed without its arrived yet

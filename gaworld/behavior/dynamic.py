@@ -100,7 +100,7 @@ def _contains_any(text: str, keywords: list) -> bool:
 # The sleep keywords in the 0.85 tier are a Phase-2.0 realism change,
 # gated behind behavior.mcf_realism: with the gate off the tier matches
 # the pre-change commitment table exactly.
-_COMMITMENT_KEYWORDS_BASE: List[Tuple[float, List[str]]] = [
+_COMMITMENT_KEYWORDS_BASE: list[tuple[float, list[str]]] = [
     (0.95, ["考试", "面试", "手术", "急救", "值班", "开庭"]),
     (0.85, ["开会", "会议", "上课", "教学", "培训", "演出", "比赛"]),
     (0.70, ["工作", "上班", "加班", "实验", "写代码", "值日"]),
@@ -1213,7 +1213,7 @@ def insert_activity_into_schedule(
 # level because per-tick evaluation may receive a fresh agent dict each tick
 # while the cooldown must still bridge ticks; records expire naturally with
 # the interrupt's own duration window.
-_ACTIVE_INTERRUPTS: Dict[Any, Dict[str, Dict[str, Any]]] = {}
+_ACTIVE_INTERRUPTS: dict[Any, dict[str, dict[str, Any]]] = {}
 
 
 def _apply_interrupt_cooldown(
@@ -1255,7 +1255,7 @@ def _apply_interrupt_cooldown(
         _ACTIVE_INTERRUPTS.pop(agent_key, None)
         return candidates
     bar = max(r["priority"] for r in records.values())
-    kept: List[InterruptCandidate] = []
+    kept: list[InterruptCandidate] = []
     for c in candidates:
         record = records.get(f"{c.source}:{c.kind}")
         if record is not None and c.priority <= record["priority"]:

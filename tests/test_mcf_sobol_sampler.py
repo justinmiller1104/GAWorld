@@ -21,7 +21,7 @@ def _assert_interior(points, bands):
     assert len(points) > 0
     for point in points:
         assert len(point) == len(bands)
-        for value, band in zip(point, bands):
+        for value, band in zip(point, bands, strict=False):
             assert band["low"] < value < band["high"], (value, band)
 
 

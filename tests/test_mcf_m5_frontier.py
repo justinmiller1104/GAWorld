@@ -278,9 +278,7 @@ def test_arch_compare_m0_dominates_m1_empty_set():
 
 def test_tuning_limit_flagged_at_band_boundary_without_improvement():
     frontier = _frontier()
-    flagged = frontier.tuning_limit(
-        config_value=0.40, band=(0.10, 0.40), improved=False
-    )
+    flagged = frontier.tuning_limit(config_value=0.40, band=(0.10, 0.40), improved=False)
     assert flagged is True, "at the band edge with no improvement the config is tuning-limited"
 
 
@@ -319,7 +317,7 @@ def _report_inputs():
     rows = []
     for cfg, seeds in (("c_lo", [11, 22]), ("c_hi", [11, 22])):
         for seed in seeds:
-            sr, ls = make_seeded_result(20.0 if cfg == "c_lo" else 8.0, ls=10.0)
+            sr, _ls = make_seeded_result(20.0 if cfg == "c_lo" else 8.0, ls=10.0)
             rows.append({"config": cfg, "seed": seed, "score_result": sr})
     return rows
 
@@ -346,11 +344,7 @@ def test_report_markdown_has_ascii_visualization():
     md = frontier.render_report(_report_inputs(), fixture=True)["markdown"]
     lines = [ln for ln in md.splitlines() if ln.strip()]
     # A crude ASCII scatter: axis characters or point markers, no plotting libs.
-    viz_lines = [
-        ln
-        for ln in lines
-        if any(ch in ln for ch in ("+", "|", "-", "*")) and len(ln) >= 10
-    ]
+    viz_lines = [ln for ln in lines if any(ch in ln for ch in ("+", "|", "-", "*")) and len(ln) >= 10]
     assert viz_lines, "Markdown report must include an ASCII frontier visualization"
 
 

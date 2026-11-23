@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from benchmark.mcf.time_use import (  # noqa: F401  (RED: module missing)
+from benchmark.mcf.time_use import (
     CATEGORIES,
     TARGETS_2024,
     classify_activity,
@@ -28,7 +28,6 @@ from benchmark.mcf.time_use import (  # noqa: F401  (RED: module missing)
     score_against_targets,
     score_directory,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. Categories
@@ -276,9 +275,8 @@ def test_overlapping_timestamps_produce_no_negative_durations():
 
 
 def test_day_boundary_split_last_episode_clamped_at_24h():
-    episodes = (
-        _eps(5, 1, ("22:00", "睡觉"))
-        + _eps(5, 2, ("00:00", "睡觉"), ("07:00", "吃早饭"), ("08:00", "上班工作"))
+    episodes = _eps(5, 1, ("22:00", "睡觉")) + _eps(
+        5, 2, ("00:00", "睡觉"), ("07:00", "吃早饭"), ("08:00", "上班工作")
     )
     result = compute_daily_minutes(episodes, tick_minutes=10)
     assert result[5][1]["sleep"] == 120  # 22:00 -> 24:00, does not bleed into day 2
@@ -288,9 +286,8 @@ def test_day_boundary_split_last_episode_clamped_at_24h():
 
 
 def test_missing_days_are_absent_and_deterministic(tmp_path):
-    episodes = (
-        _eps(9, 1, ("08:00", "上班工作"), ("18:00", "睡觉"))
-        + _eps(9, 3, ("08:00", "上班工作"), ("18:00", "睡觉"))
+    episodes = _eps(9, 1, ("08:00", "上班工作"), ("18:00", "睡觉")) + _eps(
+        9, 3, ("08:00", "上班工作"), ("18:00", "睡觉")
     )  # day 2 has no episodes at all
     result = compute_daily_minutes(episodes, tick_minutes=10)
     assert 1 in result[9]
@@ -356,9 +353,19 @@ def test_score_against_targets_paid_work_only_over_employed_agents():
 
 def test_score_against_targets_overall_error_and_zero_division_safety():
     daily = {
-        1: {1: {"paid_work": 383, "sleep": 586, "personal_care": 56, "meals": 103,
-                "housework": 77, "leisure": 153, "socializing": 18, "commuting": 50,
-                "unknown": 0}},
+        1: {
+            1: {
+                "paid_work": 383,
+                "sleep": 586,
+                "personal_care": 56,
+                "meals": 103,
+                "housework": 77,
+                "leisure": 153,
+                "socializing": 18,
+                "commuting": 50,
+                "unknown": 0,
+            }
+        },
     }
     result = score_against_targets(daily, employed_agents=[1])
     assert result.overall_error == pytest.approx(0.0)

@@ -347,6 +347,12 @@ export const Step4Agents: React.FC = () => {
       description: t('experimentBuilder.step4.modes.import.description'),
       icon: '📁',
     },
+    {
+      id: 'gaworld',
+      title: t('experimentBuilder.step4.modes.gaworld.title'),
+      description: t('experimentBuilder.step4.modes.gaworld.description'),
+      icon: '🏙️',
+    },
   ];
 
   // ==================== Manual Mode Handlers ====================
@@ -874,11 +880,11 @@ export const Step4Agents: React.FC = () => {
         <h3 className="text-lg font-semibold mb-3" style={{ color: 'var(--ss-heading)' }}>
           {t('experimentBuilder.step4.modeTitle')}
         </h3>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {agentModes.map((mode) => (
             <button
               key={mode.id}
-              onClick={() => setAgentMode(mode.id as 'manual' | 'demographic' | 'import')}
+              onClick={() => setAgentMode(mode.id as 'manual' | 'demographic' | 'import' | 'gaworld')}
               className="p-4 border-2 rounded-lg text-left transition-all"
               style={agentMode === mode.id
                 ? { background: 'var(--ss-brand-soft)', borderColor: 'var(--ss-brand-primary)' }
@@ -892,7 +898,7 @@ export const Step4Agents: React.FC = () => {
         </div>
       </div>
 
-      {scenarioId === 'gaworld' && agentMode === 'manual' && agentTypes.length === 0 && (
+      {(agentMode === 'gaworld' || (scenarioId === 'gaworld' && agentMode === 'manual' && agentTypes.length === 0)) && (
         <>
           <GAWorldPopulationChooser onApply={handleApplyGAWorldPopulation} />
           <GAWorldPopulationChooser

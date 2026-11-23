@@ -3186,6 +3186,10 @@
         "import": {
           "title": "文件导入",
           "description": "从JSON文件导入代理配置"
+        },
+        "gaworld": {
+          "title": "GAWorld 智能体",
+          "description": "在任何场景中使用 GAWorld 的真实居民作为智能体"
         }
       },
       "demographicEyebrow": "群体生成",

@@ -3192,6 +3192,10 @@
         "import": {
           "title": "File Import",
           "description": "Import agent configurations from a JSON file"
+        },
+        "gaworld": {
+          "title": "GAWorld Agents",
+          "description": "Use live GAWorld residents as agents, for any scenario"
         }
       },
       "demographicEyebrow": "Group generation",

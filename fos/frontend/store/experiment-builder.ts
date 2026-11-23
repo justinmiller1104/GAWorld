@@ -77,7 +77,7 @@ export interface ExperimentBuilderState {
   selectedActionIds: string[];
 
   // Step 4: Agents
-  agentMode: 'manual' | 'demographic' | 'import';
+  agentMode: 'manual' | 'demographic' | 'import' | 'gaworld';
   agentTypes: ManualAgentType[];
   llmProviders: LLMProvider[];
   selectedProviderId: number | null;
@@ -115,7 +115,7 @@ interface ExperimentBuilderActions {
   toggleActionId: (id: string) => void;
 
   // Step 4: Agents
-  setAgentMode: (mode: 'manual' | 'demographic' | 'import') => void;
+  setAgentMode: (mode: 'manual' | 'demographic' | 'import' | 'gaworld') => void;
   addAgentType: (agentType: ManualAgentType) => void;
   removeAgentType: (id: string) => void;
   updateAgentType: (id: string, updates: Partial<ManualAgentType>) => void;

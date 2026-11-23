@@ -21,7 +21,8 @@ import re
 import threading
 import time
 import uuid
-from types import SimpleNamespace
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from gaworld.accounts import ownership
@@ -244,19 +245,20 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
     objectives = list(payload.get("objectives") or ["paid_work_error", "leisure_social_error"])
 
     n_configs, error = _int_or_none(payload.get("n_configs") or 3, "n_configs")
-    if error:
+    if error or n_configs is None:
         return {}, error
-    seeds = []
+    seeds: list[int] = []
     for raw in payload.get("seeds") or []:
         seed, error = _int_or_none(raw, "seeds elements")
-        if error:
+        if error or seed is None:
             return {}, error
         seeds.append(seed)
     seeds = seeds[:_MAX_SEEDS]
     n_seeds, error = _int_or_none(payload.get("n_seeds") or 0, "n_seeds")
     if error:
         return {}, error
-    n_seeds = n_seeds or len(seeds)
+    if n_seeds is None:
+        n_seeds = len(seeds)
     n_configs = max(1, min(n_configs, _MAX_CONFIGS))
     if n_seeds < 1:
         n_seeds = 1
@@ -448,7 +450,7 @@ def _is_stub(exp: dict[str, Any]) -> bool:
     return exp.get("harness") == "stub" or os.environ.get("GAWORLD_OFFLINE") == "1"
 
 
-def _build_harness(exp: dict[str, Any]):
+def _build_harness(exp: dict[str, Any]) -> Callable[..., Any]:
     """The real per-leg runner (``benchmark.mcf.leg_runner``): isolated run
     dir, in-execution canary budget, the actual simulator vehicle. The stub
     execution (explicit ``harness: "stub"`` experiment option, or a forced
@@ -483,7 +485,7 @@ def _build_harness(exp: dict[str, Any]):
     )
 
 
-def _build_scorer(exp: dict[str, Any]):
+def _build_scorer(exp: dict[str, Any]) -> Callable[..., Any] | None:
     from benchmark.mcf import time_use
 
     scorer = getattr(time_use, "score_directory", None)
@@ -521,13 +523,14 @@ def _run_job(exp_id: str) -> None:
                 apply_patch(nested, base)
                 for seed in exp["seeds"]:
                     leg_pairs.append((nested, seed))
-            run_root = os.path.join(_exp_dir(root, exp_id), arch["id"])
+            run_root = Path(_exp_dir(root, exp_id), arch["id"])
             # stub legs declare their built-in cohort; real legs take the
             # cohort declared in the spec (participants basis): without it
             # paid_work scores as error=None and the frontier assembler
             # rightly refuses the vector
             from benchmark.mcf.leg_runner import STUB_EMPLOYED_AGENTS
 
+            employed: tuple[int, ...]
             if _is_stub(exp):
                 employed = STUB_EMPLOYED_AGENTS
             else:
@@ -638,10 +641,14 @@ def _compute_results(exp: dict[str, Any]) -> dict[str, Any]:
             continue
         label = f"{row['arch']}/{row['config_id']}"
         leg_status = row.get("status")
-        score_result = SimpleNamespace(
+        from benchmark.mcf.time_use import ScoreResult
+
+        score_result = ScoreResult(
             per_category=score.get("per_category") or {},
+            overall_error=0.0,
+            coverage=0.0,
+            leftover_minutes=0.0,
             frontier_valid=bool(score.get("frontier_valid")),
-            fixture=bool(score.get("fixture")),
         )
         try:
             vector = frontier.assemble_error_vector(

@@ -31,7 +31,7 @@ import json
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from benchmark.mcf.canary import CanaryExceeded, CanaryLimits
 from benchmark.mcf.launch import create_run, finalize_run, prepare_canary
@@ -217,7 +217,8 @@ def sim_leg_execute(
             ):
                 if gname in generative_city_sim.__dict__:
                     sim_globals_original[gname] = generative_city_sim.__dict__[gname]
-                    value = sim_context.get(ckey)
+                    raw_value: Any = sim_context.get(ckey)
+                    value = raw_value
                     if ckey == "agent_ids":
                         value = [int(i) for i in (value or [])]
                     elif ckey == "sim_days":
@@ -315,8 +316,9 @@ def make_leg_harness(
     # the wrapper bills against pricing[model]; a named model without a rates
     # entry would KeyError on its first call — bill it under the table's key
     model = next(iter(pricing))
-    if (model_info or {}).get("model") in pricing:
-        model = model_info["model"]
+    info_model = (model_info or {}).get("model")
+    if info_model in pricing:
+        model = info_model
     canary_limits = CanaryLimits(
         pricing=pricing, **{k: leg_limits[k] for k in _LIMIT_KEYS if k in leg_limits}
     )
@@ -348,7 +350,7 @@ def make_leg_harness(
                 base_llm=providers.call_llm,
             )
             original_llm = providers.call_llm
-            providers.call_llm = wrapped
+            providers.call_llm = cast(Callable[..., Any], wrapped)
             outcome = "completed"
             error_msg = ""
             result: dict[str, Any] = {}
@@ -386,7 +388,8 @@ def make_leg_harness(
                 "run_id": handle.run_id,
                 "run_dir": str(handle.run_dir),
             }
-        inner = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        usage_val = result.get("usage")
+        inner: dict[str, Any] = usage_val if isinstance(usage_val, dict) else {}
         usage = {
             "calls": snapshot["calls"] or int(inner.get("calls") or 0),
             "tokens_in": int(inner.get("tokens_in") or 0),

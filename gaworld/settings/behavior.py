@@ -332,7 +332,7 @@ def human_realism_settings() -> dict[str, Any]:
     }
 
 
-def mcf_realism_enabled(cfg=None) -> bool:
+def mcf_realism_enabled(cfg: dict | None = None) -> bool:
     """Whether the Phase-2.0/2.1 realism-engine changes are active.
 
     Default False: with the default configuration the simulated dynamics

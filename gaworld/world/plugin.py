@@ -36,13 +36,15 @@ see ``gaworld/world/spatial_tree.py``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from gaworld.kernel import ActionRequest, Plugin, Verdict
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.world.plugin")
 
 
-def _weather_state(env_system) -> str:
+def _weather_state(env_system: Any) -> str:
     """Best-effort read of the environment's current weather label."""
     try:
         state = env_system.export_runtime_state()
@@ -56,7 +58,7 @@ def _weather_state(env_system) -> str:
 class LocalPhysicalPlugin(Plugin):
     id = "local_physical"
 
-    def setup(self, ctx):
+    def setup(self, ctx: Any) -> None:
         # Domain imports stay out of kernel assembly; module refs kept so
         # tests can patch the module attributes.
         from gaworld.world import city_map as cm_impl
@@ -94,7 +96,7 @@ class LocalPhysicalPlugin(Plugin):
 
     # -- hooks ---------------------------------------------------------------
 
-    def _validate_location_exists(self, request, ctx):
+    def _validate_location_exists(self, request: Any, ctx: Any) -> Verdict | None:
         if request.name != "move":
             return None
         to = str(request.params.get("to", "") or "")
@@ -107,7 +109,7 @@ class LocalPhysicalPlugin(Plugin):
             return Verdict.deny(f"目的地【{to}】在这座城市里并不存在")
         return None
 
-    def _validate_venue_open(self, request, ctx):
+    def _validate_venue_open(self, request: Any, ctx: Any) -> Verdict | None:
         if request.name != "move":
             return None
         to = str(request.params.get("to", "") or "")
@@ -118,7 +120,7 @@ class LocalPhysicalPlugin(Plugin):
             return Verdict.deny(f"【{to}】目前不在营业时间")
         return None
 
-    def _refresh_map(self, hook_ctx):
+    def _refresh_map(self, hook_ctx: Any) -> None:
         if not self._enabled:
             return
         city_map = hook_ctx.get("city_map")
@@ -132,7 +134,7 @@ class LocalPhysicalPlugin(Plugin):
         if self._record_occupancy:
             self._record_where_everyone_is(hook_ctx, counts)
 
-    def _record_where_everyone_is(self, hook_ctx, counts):
+    def _record_where_everyone_is(self, hook_ctx: Any, counts: Any) -> None:
         """One row per tick: who is where, as a distribution.
 
         This is what Track B needs and nothing else writes: the per-node
@@ -145,13 +147,16 @@ class LocalPhysicalPlugin(Plugin):
         if recorder is None or not counts:
             return
         total = sum(counts.values())
-        recorder.record("spatial.occupancy", {
-            "nodes": len(counts),
-            "people": total,
-            "counts": counts,
-        })
+        recorder.record(
+            "spatial.occupancy",
+            {
+                "nodes": len(counts),
+                "people": total,
+                "counts": counts,
+            },
+        )
 
-    def _snapshot(self, hook_ctx):
+    def _snapshot(self, hook_ctx: Any) -> str | None:
         agent = hook_ctx["agent"]
         if not self._enabled:
             agent["_local_physical"] = {}
@@ -181,7 +186,7 @@ class SpatialPreferencesPlugin(Plugin):
 
     id = "spatial_preferences"
 
-    def setup(self, ctx):
+    def setup(self, ctx: Any) -> None:
         from gaworld.memory import experience as exp_impl
         from gaworld.memory import spatial_preferences as sp_impl
 
@@ -199,22 +204,20 @@ class SpatialPreferencesPlugin(Plugin):
         ctx.bus.on("location.resolve", self._redirect)
         ctx.bus.on("interrupt.applied", self._record_anomaly)
 
-    def _stateful(self, sim) -> bool:
+    def _stateful(self, sim: Any) -> bool:
         return bool(sim.config.get("stateful", False))
 
-    def _save(self, agent):
-        self._exp.save_agent_env_preferences(
-            agent["id"], agent.get("env_preferences", {})
-        )
+    def _save(self, agent: dict[str, Any]) -> None:
+        self._exp.save_agent_env_preferences(agent["id"], agent.get("env_preferences", {}))
 
-    def _load_preferences(self, hook_ctx):
+    def _load_preferences(self, hook_ctx: Any) -> None:
         sim = hook_ctx["sim"]
         if not self._stateful(sim):
             return
         for agent in hook_ctx.get("agents", []):
             agent["env_preferences"] = self._exp.load_agent_env_preferences(agent["id"])
 
-    def _decay_preferences(self, hook_ctx):
+    def _decay_preferences(self, hook_ctx: Any) -> None:
         sim = hook_ctx["sim"]
         day = hook_ctx.get("day")
         for agent in hook_ctx.get("agents", []):
@@ -222,7 +225,7 @@ class SpatialPreferencesPlugin(Plugin):
             if self._stateful(sim):
                 self._save(agent)
 
-    def _redirect(self, desired_location, hook_ctx):
+    def _redirect(self, desired_location: str, hook_ctx: Any) -> str | None:
         if not desired_location:
             return None
         sim = hook_ctx["sim"]
@@ -235,7 +238,7 @@ class SpatialPreferencesPlugin(Plugin):
         )
         return new_location
 
-    def _record_anomaly(self, hook_ctx):
+    def _record_anomaly(self, hook_ctx: Any) -> None:
         sim = hook_ctx["sim"]
         # Parity with the pre-K3i nesting: recording lived inside the
         # replan block, so it inherits the replan enable gate.
@@ -249,14 +252,11 @@ class SpatialPreferencesPlugin(Plugin):
         persistent_anomaly = (
             isinstance(itr, dict)
             and not itr.get("resumable", True)
-            and (bool(extra.get("anomaly"))
-                 or extra.get("event_type") in ("emergency", "local_physical"))
+            and (bool(extra.get("anomaly")) or extra.get("event_type") in ("emergency", "local_physical"))
         )
         # Learn to avoid a *place* only for location-bound anomalies —
         # never for city-wide macro anomalies, which aren't a place's fault.
-        if not (persistent_anomaly
-                and extra.get("event_type") == "local_physical"
-                and extra.get("location")):
+        if not (persistent_anomaly and extra.get("event_type") == "local_physical" and extra.get("location")):
             return
         agent = hook_ctx["agent"]
         self._sp.record_anomaly_experience(
@@ -280,7 +280,7 @@ class VehicleOwnershipPlugin(Plugin):
 
     id = "vehicle_ownership"
 
-    def setup(self, ctx):
+    def setup(self, ctx: Any) -> None:
         from gaworld.world import traffic as tf_impl
 
         self._tf = tf_impl
@@ -292,13 +292,12 @@ class VehicleOwnershipPlugin(Plugin):
         self._driving_age = int(cfg.get("driving_age", tf_impl.DEFAULT_DRIVING_AGE))
         two = ctx.config.get("two_wheeler_ownership", {}) or {}
         self._two_enabled = bool(two.get("enabled", True))
-        self._two_pivot = float(two.get("pivot_income_multiple",
-                                        tf_impl.DEFAULT_TWO_WHEELER_PIVOT_MULTIPLE))
+        self._two_pivot = float(two.get("pivot_income_multiple", tf_impl.DEFAULT_TWO_WHEELER_PIVOT_MULTIPLE))
         self._two_spread = float(two.get("spread", tf_impl.DEFAULT_TWO_WHEELER_SPREAD))
         self._riding_age = int(two.get("riding_age", 16))
         ctx.bus.on("agents.built", self._assign)
 
-    def _assign(self, hook_ctx):
+    def _assign(self, hook_ctx: Any) -> None:
         import random
 
         sim = hook_ctx["sim"]
@@ -316,7 +315,8 @@ class VehicleOwnershipPlugin(Plugin):
         if self._two_enabled:
             two_rate = self._tf.assign_two_wheeler_ownership(
                 hook_ctx.get("agents", []),
-                pivot_multiple=self._two_pivot, spread=self._two_spread,
+                pivot_multiple=self._two_pivot,
+                spread=self._two_spread,
                 riding_age=self._riding_age,
                 rng=random.Random(f"two_wheeler_ownership:{seed}"),
             )
@@ -334,13 +334,13 @@ class TransportHabitPlugin(Plugin):
 
     id = "transport_habit"
 
-    def setup(self, ctx):
+    def setup(self, ctx: Any) -> None:
         cfg = ctx.config.get("transport_habit", {}) or {}
         if not bool(cfg.get("enabled", True)):
             return
         ctx.bus.on("agents.built", self._assign)
 
-    def _assign(self, hook_ctx):
+    def _assign(self, hook_ctx: Any) -> None:
         from collections import Counter
 
         from gaworld.world import mobility
@@ -370,7 +370,7 @@ class TrafficPlugin(Plugin):
     # are no flows to commit, so the exact value never reaches a result.
     _FALLBACK_STEP_MINUTES = 30.0
 
-    def setup(self, ctx):
+    def setup(self, ctx: Any) -> None:
         from gaworld.world import city_map as cm_impl
         from gaworld.world import traffic as tf_impl
 
@@ -394,10 +394,10 @@ class TrafficPlugin(Plugin):
 
     # -- hooks ---------------------------------------------------------------
 
-    def _state(self, sim):
+    def _state(self, sim: Any) -> Any:
         return sim.plugin_state(self.id)
 
-    def _reset(self, hook_ctx):
+    def _reset(self, hook_ctx: Any) -> None:
         """Start each day from free flow, so a day's dynamics never inherit
         the previous evening's jam across the day-boundary phases."""
         sim = hook_ctx["sim"]
@@ -408,7 +408,7 @@ class TrafficPlugin(Plugin):
         if city_map:
             self._cm.clear_congestion(city_map)
 
-    def _collect(self, hook_ctx):
+    def _collect(self, hook_ctx: Any) -> None:
         """Accumulate this agent's road load for the tick now in progress."""
         travel = (hook_ctx.get("step") or {}).get("_travel")
         if not travel:
@@ -421,7 +421,7 @@ class TrafficPlugin(Plugin):
             agents_represent=self._agents_represent,
         )
 
-    def _commit(self, hook_ctx):
+    def _commit(self, hook_ctx: Any) -> None:
         """Turn the *previous* tick's flows into this tick's congestion.
 
         Running here — before any agent steps — is what keeps the result
@@ -452,7 +452,7 @@ class TrafficPlugin(Plugin):
         )
         self._record(hook_ctx["sim"], flows, congestion, step_minutes)
 
-    def _record(self, sim, flows, congestion, step_minutes):
+    def _record(self, sim: Any, flows: Any, congestion: Any, step_minutes: float) -> None:
         """One row per tick, congested or not.
 
         A flat line of 1.0 is a finding, not noise: it is what says the
@@ -462,20 +462,20 @@ class TrafficPlugin(Plugin):
         if recorder is None:
             return
         factors = sorted(congestion.items(), key=lambda kv: -kv[1])
-        recorder.record("traffic.tick", {
-            "step_minutes": round(float(step_minutes), 1),
-            "edges_loaded": len(flows),
-            "edges_congested": len(factors),
-            "flow_pcu": round(sum(flows.values()), 1),
-            "congestion_max": round(factors[0][1], 3) if factors else 1.0,
-            "congestion_mean": (
-                round(sum(v for _, v in factors) / len(factors), 3) if factors else 1.0
-            ),
-            "busiest": [{"edge": key, "factor": round(value, 3)}
-                        for key, value in factors[:3]],
-        })
+        recorder.record(
+            "traffic.tick",
+            {
+                "step_minutes": round(float(step_minutes), 1),
+                "edges_loaded": len(flows),
+                "edges_congested": len(factors),
+                "flow_pcu": round(sum(flows.values()), 1),
+                "congestion_max": round(factors[0][1], 3) if factors else 1.0,
+                "congestion_mean": (round(sum(v for _, v in factors) / len(factors), 3) if factors else 1.0),
+                "busiest": [{"edge": key, "factor": round(value, 3)} for key, value in factors[:3]],
+            },
+        )
 
-    def _elapsed_minutes(self, previous_min, now_min):
+    def _elapsed_minutes(self, previous_min: int | None, now_min: int | None) -> float:
         """Length of the tick whose flows we are about to commit.
 
         Measured from the timeline itself rather than read from config: the
@@ -505,7 +505,7 @@ class VenueCapacityPlugin(Plugin):
 
     id = "venue_capacity"
 
-    def setup(self, ctx):
+    def setup(self, ctx: Any) -> None:
         from gaworld.world import city_map as cm_impl
         from gaworld.world import venue_capacity as vc_impl
 
@@ -529,7 +529,7 @@ class VenueCapacityPlugin(Plugin):
         ctx.bus.on("tick.agent_order", self._order)
         ctx.controller.register_validator(self._validate, priority=-10)
 
-    def _refresh_capacity_config(self, ctx):
+    def _refresh_capacity_config(self, ctx: Any) -> None:
         """Re-read the capacity-side settings from the live config.
 
         Node-attribute capacities are read live at every admission attempt
@@ -548,32 +548,32 @@ class VenueCapacityPlugin(Plugin):
         self._represent = max(0.0, float(represent))
         self._top_k = max(0, int(cfg.get("redirect_top_k", 4)))
 
-    def _node(self, city_map, location):
+    def _node(self, city_map: Any, location: str | None) -> Any:
         return self._cm.node_by_name(city_map, location) if city_map and location else None
 
-    def _start_tick(self, hook_ctx):
+    def _start_tick(self, hook_ctx: Any) -> None:
         city_map = hook_ctx.get("city_map")
         if self._by_room:
             self._ledger.reset(self._room_start_counts(hook_ctx.get("agents", []), city_map))
             return
 
-        def capped_id(location):
+        def capped_id(location: Any) -> str | None:
             node = self._node(city_map, location)
             return node["id"] if self._vc.is_capped(node, self._categories) else None
 
         self._ledger.reset(self._vc.start_counts(hook_ctx.get("agents", []), capped_id))
 
     @staticmethod
-    def _room_slot(node_id, arena):
+    def _room_slot(node_id: str, arena: Any) -> str:
         return f"{node_id}\x1f{arena}"
 
-    def _room_start_counts(self, agents, city_map):
+    def _room_start_counts(self, agents: Any, city_map: Any) -> dict[str, int]:
         """Per (venue, room): who is in it, plus who is on the way to it.
 
         Someone travelling counts in the room they were admitted to; anyone
         without a room yet counts in the building's default room.
         """
-        counts = {}
+        counts: dict[str, int] = {}
         for agent in agents or []:
             locations = agent.get("locations") if isinstance(agent, dict) else None
             if not isinstance(locations, dict):
@@ -594,11 +594,11 @@ class VenueCapacityPlugin(Plugin):
             counts[slot] = counts.get(slot, 0) + 1
         return counts
 
-    def _rooms_for(self, node, request, agent, city_map):
+    def _rooms_for(self, node: Any, request: Any, agent: Any, city_map: Any) -> Any:
         """The rooms this trip's activity could use at *node*, best first."""
         locations = agent.get("locations") or {}
 
-        def is_here(where):
+        def is_here(where: Any) -> bool:
             other = self._node(city_map, where)
             return bool(other) and other["id"] == node["id"]
 
@@ -608,7 +608,7 @@ class VenueCapacityPlugin(Plugin):
             key, slot, staff=is_here(locations.get("workplace")), resident=is_here(locations.get("home"))
         )
 
-    def _free_room(self, node, request, agent, city_map):
+    def _free_room(self, node: Any, request: Any, agent: Any, city_map: Any) -> Any:
         key, rooms = self._rooms_for(node, request, agent, city_map)
         try:
             capacity = float(node.get("capacity"))
@@ -620,7 +620,7 @@ class VenueCapacityPlugin(Plugin):
                 return arena
         return None
 
-    def _admit(self, node, request, agent, city_map):
+    def _admit(self, node: Any, request: Any, agent: Any, city_map: Any) -> bool:
         """Count the visitor in (per room when rooms are on); False when full."""
         if not self._by_room:
             if not self._has_room(node):
@@ -635,26 +635,26 @@ class VenueCapacityPlugin(Plugin):
         agent.setdefault("locations", {})["room_intent"] = {"node": node["id"], "arena": arena}
         return True
 
-    def _load(self, node):
+    def _load(self, node: Any) -> int:
         if not self._by_room:
             return self._ledger.load(node["id"])
         rooms = self._st.BLUEPRINTS[self._st.blueprint_key(node)]["rooms"]
         return sum(self._ledger.load(self._room_slot(node["id"], r["name"])) for r in rooms)
 
-    def _full_reason(self, node, request, agent, city_map):
+    def _full_reason(self, node: Any, request: Any, agent: Any, city_map: Any) -> str:
         if not self._by_room:
             return f"【{node['id']}】已经满了，附近同类的地方也都没有空位"
         key, rooms = self._rooms_for(node, request, agent, city_map)
         labels = "、".join(dict.fromkeys(self._st.room_label(key, arena) for arena in rooms))
         return f"【{node['id']}】的{labels}已经满了，附近同类的地方也都没有空位"
 
-    def _order(self, agents, hook_ctx):
+    def _order(self, agents: list[Any], hook_ctx: Any) -> list[Any]:
         return self._vc.shuffled(agents, self._seed, hook_ctx.get("day"), hook_ctx.get("time_str"))
 
-    def _has_room(self, node):
+    def _has_room(self, node: Any) -> bool:
         return not self._vc.is_full(self._ledger.load(node["id"]), node.get("capacity"), self._represent)
 
-    def _validate(self, request, ctx):
+    def _validate(self, request: Any, ctx: Any) -> Verdict | None:
         if request.name != "move":
             return None
         self._refresh_capacity_config(ctx)
@@ -671,43 +671,65 @@ class VenueCapacityPlugin(Plugin):
             return None  # already inside, already counted
         if self._admit(node, request, agent, city_map):
             if ctx.recorder is not None:
-                ctx.recorder.record("venue.admission", self._admission_row(
-                    request.agent_id, node, "admitted",
-                ))
+                ctx.recorder.record(
+                    "venue.admission",
+                    self._admission_row(
+                        request.agent_id,
+                        node,
+                        "admitted",
+                    ),
+                )
             return None
         time_str = getattr(ctx.clock, "time_str", "")
-        for alt_id, _distance in self._cm.nearest_by_category(
-            city_map, node["id"], node.get("category", ""), top_k=self._top_k
-        ) if self._top_k else []:
+        for alt_id, _distance in (
+            self._cm.nearest_by_category(city_map, node["id"], node.get("category", ""), top_k=self._top_k)
+            if self._top_k
+            else []
+        ):
             alt = self._node(city_map, alt_id)
             if not alt or not self._cm.is_open(city_map, alt_id, time_str):
                 continue
             if not self._admit(alt, request, agent, city_map):
                 continue
             if ctx.recorder is not None:
-                ctx.recorder.record("venue.admission", self._admission_row(
-                    request.agent_id, alt, "redirected",
-                ))
-                ctx.recorder.record("venue.redirect", {
-                    "agent_id": request.agent_id,
-                    "from": node["id"],
-                    "to": alt["id"],
-                    "load": self._load(node),
-                    "capacity": node.get("capacity"),
-                })
-            return Verdict.rewrite(ActionRequest(
-                agent_id=request.agent_id,
-                name=request.name,
-                params={**request.params, "to": alt["id"]},
-                raw_text=request.raw_text,
-            ))
+                ctx.recorder.record(
+                    "venue.admission",
+                    self._admission_row(
+                        request.agent_id,
+                        alt,
+                        "redirected",
+                    ),
+                )
+                ctx.recorder.record(
+                    "venue.redirect",
+                    {
+                        "agent_id": request.agent_id,
+                        "from": node["id"],
+                        "to": alt["id"],
+                        "load": self._load(node),
+                        "capacity": node.get("capacity"),
+                    },
+                )
+            return Verdict.rewrite(
+                ActionRequest(
+                    agent_id=request.agent_id,
+                    name=request.name,
+                    params={**request.params, "to": alt["id"]},
+                    raw_text=request.raw_text,
+                )
+            )
         if ctx.recorder is not None:
-            ctx.recorder.record("venue.admission", self._admission_row(
-                request.agent_id, node, "denied",
-            ))
+            ctx.recorder.record(
+                "venue.admission",
+                self._admission_row(
+                    request.agent_id,
+                    node,
+                    "denied",
+                ),
+            )
         return Verdict.deny(self._full_reason(node, request, agent, city_map))
 
-    def _admission_row(self, agent_id, node, outcome):
+    def _admission_row(self, agent_id: int, node: Any, outcome: str) -> dict[str, Any]:
         """One venue.admission row PER REQUEST (per-attempt semantics):
         retries after a denial are new rows; one accepted request never
         duplicates. Occupancy is read after the admit/deny decision."""
@@ -738,7 +760,7 @@ class RoomsPlugin(Plugin):
 
     id = "rooms"
 
-    def setup(self, ctx):
+    def setup(self, ctx: Any) -> None:
         from gaworld.world import city_map as cm_impl
         from gaworld.world import spatial_tree as st_impl
 
@@ -747,16 +769,16 @@ class RoomsPlugin(Plugin):
         cfg = (ctx.config.get("local_physical", {}) or {}).get("rooms", {}) or {}
         if not bool(cfg.get("enabled", False)):
             return
-        self._flats = {}  # building id -> {household: flat}
-        self._taken = {}  # (building id, flat) -> {room: objects in use this tick}
+        self._flats: dict[Any, dict[Any, Any]] = {}  # building id -> {household: flat}
+        self._taken: dict[Any, dict[Any, Any]] = {}  # (building id, flat) -> {room: objects in use this tick}
         ctx.bus.on("agents.built", self._seat_households, priority=-10)
         ctx.bus.on("on_time_tick", self._new_tick)
         ctx.bus.on("agent.moved", self._place)
 
-    def _node(self, city_map, location):
+    def _node(self, city_map: Any, location: str | None) -> Any:
         return self._cm.node_by_name(city_map, location) if city_map and location else None
 
-    def _flat_for(self, agent, node, city_map):
+    def _flat_for(self, agent: Any, node: Any, city_map: Any) -> Any:
         flats = self._flats.setdefault(node["id"], {})
         household = self._st.household_key(agent)
         if household not in flats:
@@ -764,27 +786,29 @@ class RoomsPlugin(Plugin):
             flats.update(self._st.assign_units([household], interior, flats))
         return flats[household]
 
-    def _seat_households(self, hook_ctx):
+    def _seat_households(self, hook_ctx: Any) -> None:
         sim = hook_ctx.get("sim")
         city_map = getattr(sim, "extras", {}).get("city_map") if sim is not None else None
         if not city_map:
             return
-        by_building = {}
+        by_building: dict[Any, set[Any]] = {}
         for agent in hook_ctx.get("agents") or []:
             node = self._node(city_map, (agent.get("locations") or {}).get("home"))
             if node and self._st.is_residential(self._st.blueprint_key(node)):
                 by_building.setdefault(node["id"], set()).add(self._st.household_key(agent))
         interiors = city_map.get("interiors") or {}
         for node_id, households in sorted(by_building.items()):
-            self._flats[node_id] = self._st.assign_units(households, interiors.get(node_id), self._flats.get(node_id))
+            self._flats[node_id] = self._st.assign_units(
+                households, interiors.get(node_id), self._flats.get(node_id)
+            )
         if by_building:
             flats = sum(len(v) for v in self._flats.values())
             print(f"🚪 分户：{len(by_building)} 栋住宅楼 / {flats} 户（同屋才算碰面）")
 
-    def _new_tick(self, hook_ctx):
+    def _new_tick(self, hook_ctx: Any) -> None:
         self._taken = {}
 
-    def _place(self, hook_ctx):
+    def _place(self, hook_ctx: Any) -> None:
         agent = hook_ctx.get("agent") or {}
         locations = agent.get("locations")
         if not isinstance(locations, dict):
@@ -802,7 +826,7 @@ class RoomsPlugin(Plugin):
         st = self._st
         key = st.blueprint_key(node)
 
-        def is_here(where):
+        def is_here(where: Any) -> bool:
             other = self._node(city_map, where)
             return bool(other) and other["id"] == node["id"]
 

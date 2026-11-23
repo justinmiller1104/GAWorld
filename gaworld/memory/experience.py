@@ -8,37 +8,38 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 from gaworld.settings import CONFIG
 from gaworld.settings.behavior import mcf_realism_enabled
 
 
-def _memory_dir(cfg=None):
+def _memory_dir(cfg: dict[str, Any] | None = None) -> str:
     base = cfg if isinstance(cfg, dict) else CONFIG
     return base.get("memory_dir", "output/memory")
 
 
-def _episodes_path(agent_id, cfg=None):
+def _episodes_path(agent_id: int | str, cfg: dict[str, Any] | None = None) -> str:
     return os.path.join(_memory_dir(cfg), f"agent_{agent_id}_episodes.jsonl")
 
 
-def _habits_path(agent_id, cfg=None):
+def _habits_path(agent_id: int | str, cfg: dict[str, Any] | None = None) -> str:
     return os.path.join(_memory_dir(cfg), f"agent_{agent_id}_habits.json")
 
 
-def _intentions_path(agent_id, cfg=None):
+def _intentions_path(agent_id: int | str, cfg: dict[str, Any] | None = None) -> str:
     return os.path.join(_memory_dir(cfg), f"agent_{agent_id}_intentions.json")
 
 
-def _relationships_path(agent_id, cfg=None):
+def _relationships_path(agent_id: int | str, cfg: dict[str, Any] | None = None) -> str:
     return os.path.join(_memory_dir(cfg), f"agent_{agent_id}_relationships.json")
 
 
-def _env_preferences_path(agent_id, cfg=None):
+def _env_preferences_path(agent_id: int | str, cfg: dict[str, Any] | None = None) -> str:
     return os.path.join(_memory_dir(cfg), f"agent_{agent_id}_env_preferences.json")
 
 
-def _load_json_dict(path):
+def _load_json_dict(path: str) -> dict[str, Any]:
     if not os.path.exists(path):
         return {}
     try:
@@ -49,13 +50,13 @@ def _load_json_dict(path):
     return data if isinstance(data, dict) else {}
 
 
-def _save_json_dict(path, data):
+def _save_json_dict(path: str, data: dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def load_agent_episodes(agent_id, cfg=None):
+def load_agent_episodes(agent_id: int | str, cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     path = _episodes_path(agent_id, cfg=cfg)
     if not os.path.exists(path):
         return []
@@ -77,7 +78,9 @@ def load_agent_episodes(agent_id, cfg=None):
     return episodes
 
 
-def append_agent_episode(agent_id, episode, cfg=None):
+def append_agent_episode(
+    agent_id: int | str, episode: dict[str, Any], cfg: dict[str, Any] | None = None
+) -> None:
     if not isinstance(episode, dict):
         return
     path = _episodes_path(agent_id, cfg=cfg)
@@ -102,11 +105,11 @@ def append_agent_episode(agent_id, episode, cfg=None):
 _OPEN_SPANS: dict[int, dict] = {}
 
 
-def _reset_span_state():
+def _reset_span_state() -> None:
     _OPEN_SPANS.clear()
 
 
-def _write_span_row(agent_id, span, cfg=None):
+def _write_span_row(agent_id: int, span: dict[str, Any], cfg: dict[str, Any] | None = None) -> None:
     row = {
         "kind": "span",
         "agent_id": agent_id,
@@ -120,7 +123,15 @@ def _write_span_row(agent_id, span, cfg=None):
     append_agent_episode(agent_id, row, cfg=cfg)
 
 
-def record_activity_span(agent_id, day, time_str, activity, location="", purpose="", cfg=None):
+def record_activity_span(
+    agent_id: int,
+    day: int,
+    time_str: str,
+    activity: str,
+    location: str = "",
+    purpose: str = "",
+    cfg: dict[str, Any] | None = None,
+) -> None:
     """Note the agent's current activity; when it differs from the open span's
     activity, close the open span at this tick and open a new one."""
     # Span rows are an MCF realism artifact; a default run writes none.
@@ -141,7 +152,7 @@ def record_activity_span(agent_id, day, time_str, activity, location="", purpose
     }
 
 
-def close_agent_span(agent_id, day, time_str, cfg=None):
+def close_agent_span(agent_id: int, day: int, time_str: str, cfg: dict[str, Any] | None = None) -> None:
     """Close the agent's open span at run end (or day end) — the final span
     must not stay implicit."""
     if not mcf_realism_enabled():
@@ -154,14 +165,16 @@ def close_agent_span(agent_id, day, time_str, cfg=None):
     _write_span_row(agent_id, open_span, cfg=cfg)
 
 
-def close_all_agent_spans(agents_by_id, day, time_str, cfg=None):
+def close_all_agent_spans(
+    agents_by_id: dict[int, Any], day: int, time_str: str, cfg: dict[str, Any] | None = None
+) -> None:
     """Close every open activity span so the final segment is an explicit row,
     not an implicit tail the scorer has to guess at."""
     for agent_id in agents_by_id:
         close_agent_span(agent_id, day, time_str, cfg=cfg)
 
 
-def prune_and_decay_episodes(agent_id, cfg):
+def prune_and_decay_episodes(agent_id: int | str, cfg: dict[str, Any] | None) -> None:
     if not isinstance(cfg, dict):
         cfg = {}
     episodes = load_agent_episodes(agent_id)
@@ -213,42 +226,46 @@ def prune_and_decay_episodes(agent_id, cfg):
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 
-def load_agent_habits(agent_id, cfg=None):
+def load_agent_habits(agent_id: int | str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     return _load_json_dict(_habits_path(agent_id, cfg=cfg))
 
 
-def save_agent_habits(agent_id, habits, cfg=None):
+def save_agent_habits(agent_id: int | str, habits: Any, cfg: dict[str, Any] | None = None) -> None:
     if not isinstance(habits, dict):
         habits = {}
     _save_json_dict(_habits_path(agent_id, cfg=cfg), habits)
 
 
-def load_agent_intentions(agent_id, cfg=None):
+def load_agent_intentions(agent_id: int | str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     return _load_json_dict(_intentions_path(agent_id, cfg=cfg))
 
 
-def save_agent_intentions(agent_id, intentions, cfg=None):
+def save_agent_intentions(agent_id: int | str, intentions: Any, cfg: dict[str, Any] | None = None) -> None:
     if not isinstance(intentions, dict):
         intentions = {}
     _save_json_dict(_intentions_path(agent_id, cfg=cfg), intentions)
 
 
-def load_agent_relationships(agent_id, cfg=None):
+def load_agent_relationships(agent_id: int | str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     return _load_json_dict(_relationships_path(agent_id, cfg=cfg))
 
 
-def save_agent_relationships(agent_id, relationships, cfg=None):
+def save_agent_relationships(
+    agent_id: int | str, relationships: Any, cfg: dict[str, Any] | None = None
+) -> None:
     if not isinstance(relationships, dict):
         relationships = {}
     _save_json_dict(_relationships_path(agent_id, cfg=cfg), relationships)
 
 
-def load_agent_env_preferences(agent_id, cfg=None):
+def load_agent_env_preferences(agent_id: int | str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     """Load the agent's learned location-aversion preferences (P4)."""
     return _load_json_dict(_env_preferences_path(agent_id, cfg=cfg))
 
 
-def save_agent_env_preferences(agent_id, env_preferences, cfg=None):
+def save_agent_env_preferences(
+    agent_id: int | str, env_preferences: Any, cfg: dict[str, Any] | None = None
+) -> None:
     """Persist the agent's learned location-aversion preferences (P4)."""
     if not isinstance(env_preferences, dict):
         env_preferences = {}

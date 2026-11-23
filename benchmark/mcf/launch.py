@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 from benchmark.mcf.canary import CanaryBudget, CanaryExceeded, CanaryLimits
 
@@ -103,13 +103,12 @@ def create_run(base_dir: str | Path, config: dict[str, Any] | None = None) -> An
         def __enter__(self) -> RunHandle:
             return handle
 
-        def __exit__(self, exc_type, exc, tb) -> bool:
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
             if not handle.finalized:
                 # Interrupted: leave the partial manifest (in_progress / empty
                 # finished_at) in the run's own directory; nothing is appended
                 # anywhere else, and the next run starts in its own directory.
                 handle.write_manifest(outcome="in_progress")
-            return False
 
     return _RunContext()
 
@@ -121,7 +120,7 @@ def finalize_run(handle: RunHandle, *, outcome: str = "completed") -> dict[str, 
 
 
 def validate_observation_window(
-    records: Iterable[Mapping[str, object]],
+    records: Iterable[Mapping[str, Any]],
     window_start_min: int,
     window_end_min: int,
     days: Iterable[int] | None = None,
@@ -133,7 +132,7 @@ def validate_observation_window(
     allowed_days = set(days) if days is not None else None
     problems: list[str] = []
     for record in records:
-        day = int(record.get("day", 0))  # type: ignore[arg-type]
+        day = int(record.get("day", 0))
         clock = str(record.get("time", ""))
         minute = -1
         if ":" in clock:
@@ -330,10 +329,12 @@ def prepare_canary(
     _validate_pricing(pricing)
     injected = base_llm is not None
     if base_llm is None:
-        from gaworld.llm.providers import call_llm as base_llm  # lazy; keeps tests network-free
+        from gaworld.llm.providers import call_llm
+
+        base_llm = call_llm  # lazy; keeps tests network-free
 
     canary_cfg = config.get("canary", {}) if isinstance(config, dict) else {}
-    model = config.get("model") or next(iter(limits.pricing))
+    model = config.get("model") or next(iter(limits.pricing or {}))
     est_in = int(canary_cfg.get("est_tokens_in", getattr(base_llm, "tokens_in", 0)))
     est_out = int(canary_cfg.get("est_tokens_out", getattr(base_llm, "tokens_out", 0)))
     budget = CanaryBudget(limits)
@@ -372,7 +373,7 @@ def maybe_canary_llm(
 def canary_manifest(budget: CanaryBudget, reason: str, *, dry_run: bool = False) -> dict[str, Any]:
     """JSON-serializable partial-run manifest, safe to write after a kill."""
     latencies = list(getattr(budget, "latencies", ()) or ())
-    manifest = {
+    manifest: dict[str, Any] = {
         "dry_run": dry_run,
         "reason": reason,
         "usage": budget.usage_snapshot(),
@@ -434,7 +435,7 @@ def install_canary(config: dict[str, Any], *, authorize: bool = False):
         base_llm=providers.call_llm,
     )
     original = providers.call_llm
-    providers.call_llm = wrapped
+    providers.call_llm = cast(Callable[..., Any], wrapped)
     # Latency samples ride on the budget so the post-kill manifest reports them.
     budget.latencies = wrapped.latencies
     # Measured-vs-estimated token accounting likewise: the manifest is written

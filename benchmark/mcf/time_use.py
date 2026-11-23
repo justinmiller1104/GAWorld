@@ -102,6 +102,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "ADMISSIBLE_STYLE_FIT",
@@ -154,7 +155,7 @@ MINUTES_PER_DAY = 24 * 60
 # paid_work is a participants-basis average -> score only over employed
 # agents. study is inflated by 6-17-year-olds in the survey sample ->
 # excluded from scoring by default.
-TARGETS_2024: dict[str, dict[str, object]] = {
+TARGETS_2024: dict[str, dict[str, Any]] = {
     "sleep": {"minutes": 586, "basis": "all_persons", "survey_basis": "weekly_average"},
     "personal_care": {"minutes": 56, "basis": "all_persons", "survey_basis": "weekly_average"},
     "meals": {"minutes": 103, "basis": "all_persons", "survey_basis": "weekly_average"},
@@ -177,7 +178,7 @@ TARGETS_2024: dict[str, dict[str, object]] = {
 # explicit day_types flag is required to pick the matching column.
 # The 2018 bulletin reports 个人卫生护理+用餐 as one combined 154-min bucket;
 # it is kept under meals with that caveat.
-TARGETS_2018: dict[str, dict[str, object]] = {
+TARGETS_2018: dict[str, dict[str, Any]] = {
     "sleep": {"minutes": 556, "basis": "all_persons", "survey_basis": "workday_restday_split"},
     "meals": {
         "minutes": 154,
@@ -312,7 +313,7 @@ _IN_TRANSIT_STATUSES = frozenset({"departed", "in_transit"})
 _TRAVEL_ACTION_RE = re.compile(r"乘坐.+移动")
 
 
-def _soft_coerce(ep: Episode | Mapping[str, object]) -> Episode:
+def _soft_coerce(ep: Episode | Mapping[str, Any]) -> Episode:
     """Coerce a possibly-partial dict (classification-only) into an Episode."""
     if isinstance(ep, Episode):
         return ep
@@ -330,7 +331,7 @@ def _soft_coerce(ep: Episode | Mapping[str, object]) -> Episode:
     )
 
 
-def classify_episode(ep: Episode | Mapping[str, object]) -> tuple[str | None, str]:
+def classify_episode(ep: Episode | Mapping[str, Any]) -> tuple[str | None, str]:
     """Classify one episode using structured fields, conservatively.
 
     Precedence (first match wins, deterministic):
@@ -368,7 +369,7 @@ def classify_episode(ep: Episode | Mapping[str, object]) -> tuple[str | None, st
     return None, "unknown"
 
 
-def split_run_segments(episodes: Iterable[Episode | Mapping[str, object]]) -> list[list[Episode]]:
+def split_run_segments(episodes: Iterable[Episode | Mapping[str, Any]]) -> list[list[Episode]]:
     """Split an episode stream into per-run segments (contamination guard).
 
     Episode files are per-agent and appended across runs; when a second run
@@ -404,7 +405,7 @@ def _parse_clock(time: str) -> int:
     return int(hours) * 60 + int(minutes)
 
 
-def _row_agent_id(path: str | Path, row: Mapping[str, object]) -> int | None:
+def _row_agent_id(path: str | Path, row: Mapping[str, Any]) -> int | None:
     """Resolve a record's agent id; None when it cannot be attributed.
 
     The filename ``agent_<N>.jsonl`` names the agent; otherwise the row must
@@ -501,7 +502,7 @@ def load_spans(path: str | Path) -> list[dict[str, str | int]]:
 
 
 def spans_daily_minutes(
-    spans: Iterable[Mapping[str, object]],
+    spans: Iterable[Mapping[str, Any]],
 ) -> dict[int, dict[int, dict[str, int]]]:
     """Per-agent, per-day minutes per category straight from span rows —
     no tick-grid reconstruction, so a missed tick cannot lose coverage."""
@@ -523,20 +524,20 @@ def spans_daily_minutes(
         if purpose in _COMMUTING_PURPOSES:
             category = "commuting"
         else:
-            category, _ = classify_activity(str(span.get("activity", "")))
-            category = category or UNKNOWN
+            cat, _ = classify_activity(str(span.get("activity", "")))
+            category = cat or UNKNOWN
         day_map = result.setdefault(agent_id, {}).setdefault(day, _empty_minutes())
         day_map[category] += minutes
     return result
 
 
-def _coerce_episode(ep: Episode | Mapping[str, object]) -> Episode:
+def _coerce_episode(ep: Episode | Mapping[str, Any]) -> Episode:
     if isinstance(ep, Episode):
         return ep
     travel = ep.get("travel")
     return Episode(
-        agent_id=int(ep["agent_id"]),  # type: ignore[arg-type]
-        day=int(ep["day"]),  # type: ignore[arg-type]
+        agent_id=int(ep["agent_id"]),
+        day=int(ep["day"]),
         time=str(ep["time"]),
         final_activity=str(ep.get("final_activity", "")),
         scheduled_activity=str(ep.get("scheduled_activity", "")),
@@ -555,7 +556,7 @@ def _empty_minutes() -> dict[str, int]:
 
 
 def compute_daily_minutes(
-    episodes: Iterable[Episode | Mapping[str, object]],
+    episodes: Iterable[Episode | Mapping[str, Any]],
     tick_minutes: int,
 ) -> dict[int, dict[int, dict[str, int]]]:
     """Infer per-agent, per-day minutes per category from episode timestamps.
@@ -751,7 +752,7 @@ def score_against_targets(
     def is_workday(agent_id: int, day: int) -> bool:
         return day_types is None or day_types.get(agent_id, {}).get(day) == "workday"
 
-    per_category: dict[str, dict[str, object]] = {}
+    per_category: dict[str, dict[str, Any]] = {}
     for category in CATEGORIES:
         if category == "study":
             continue
@@ -775,7 +776,7 @@ def score_against_targets(
             values = [minutes.get(category, 0) for _, _, minutes in agent_days]
         sim = mean_over([float(v) for v in values])
         target = float(TARGETS_2024[category]["minutes"])
-        spec: dict[str, object] = {
+        spec: dict[str, Any] = {
             "sim": sim,
             "target": target,
             "error": abs(sim - target),
@@ -1041,7 +1042,7 @@ def _sleep_tail_corroborated(last_start: int, last_category: str | None, prev_ca
 
 
 def compute_observed_minutes(
-    episodes: Iterable[Episode | Mapping[str, object]],
+    episodes: Iterable[Episode | Mapping[str, Any]],
     tick_minutes: int,
     window_start: int | None = None,
     window_end: int | None = None,
@@ -1132,7 +1133,7 @@ def compute_observed_minutes(
 
 
 def coverage_breakdown(
-    episodes: Iterable[Episode | Mapping[str, object]],
+    episodes: Iterable[Episode | Mapping[str, Any]],
     tick_minutes: int,
 ) -> dict[str, float]:
     """Observed-span coverage vs full-day coverage, reported separately.
@@ -1226,7 +1227,7 @@ _VERIFIED_PURPOSE_RE = re.compile(r"^[a-z_]+$")
 _COMMUTING_PURPOSES = frozenset({"paid_work"})
 
 
-def classify_activity_record(record: Mapping[str, object]) -> tuple[str, str]:
+def classify_activity_record(record: Mapping[str, Any]) -> tuple[str, str]:
     """Classify one structured activity snapshot -> (category, evidence_source).
 
     Precedence (deterministic):

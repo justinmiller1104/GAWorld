@@ -107,7 +107,7 @@ def assemble_error_vector(
 
 def _axis_names(vectors: dict) -> list[str]:
     """Axis keys (= ``*_error`` values) present in the vectors, registry order first."""
-    sample = next(iter(vectors.values()), {})
+    sample: dict = next(iter(vectors.values()), {})
     registry_order = [n for n in AXES if n in sample]
     extra = sorted(k for k in sample if k.endswith("_error") and k not in registry_order)
     return registry_order + extra
@@ -128,7 +128,7 @@ def average_across_seeds(
     complete = not missing
     names = axes if axes is not None else _axis_names(per_seed_vectors)
 
-    out = {"config": config}
+    out: dict[str, object] = {"config": config}
     for axis in names:
         values = [float(v[axis]) for v in per_seed_vectors.values() if axis in v]
         out[axis] = sum(values) / len(values) if values else float("nan")
@@ -472,7 +472,7 @@ def render_report(rows, fixture: bool = True, expected_seeds: list | None = None
         else 0.0
     )
     noisy = bool(spreads_pw) and noise_domination(max(spreads_pw), ranges_pw)
-    diagnostics = {
+    diagnostics: dict[str, object] = {
         "noise_domination": {
             "flagged": noisy,
             "max_seed_spread": max(spreads_pw) if spreads_pw else None,

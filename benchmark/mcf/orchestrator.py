@@ -104,7 +104,7 @@ def run_legs(
             kwargs: dict[str, Any] = {}
             if call_llm is not None and canary_limits is not None and harness_takes_llm:
                 kwargs["call_llm"] = wrap_call_llm(call_llm, CanaryBudget(canary_limits))
-            result = harness(copy.deepcopy(config), run_dir, seed=seed, **kwargs) or {}
+            result: dict[str, Any] = harness(copy.deepcopy(config), run_dir, seed=seed, **kwargs) or {}
             harness_error: str | None = None
         except CanaryExceeded as exc:
             # In-execution kill: same mechanism as the canary, same reason.
@@ -132,7 +132,8 @@ def run_legs(
 
         # token honesty: measured only when BOTH counts are present and valid
         measured = _measured_usage(result.get("measured_usage"))
-        raw_usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        usage_val = result.get("usage")
+        raw_usage: dict[str, Any] = usage_val if isinstance(usage_val, dict) else {}
         if measured is not None:
             usage = {
                 "calls": int(raw_usage.get("calls") or 0),

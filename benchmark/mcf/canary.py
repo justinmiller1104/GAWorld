@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import itertools
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -34,7 +34,7 @@ class CanaryLimits:
     max_elapsed_seconds: float = 1800
     max_error_rate: float = 0.05
     min_error_sample: int = 20
-    pricing: dict[str, dict[str, float]] = field(default=None)  # type: ignore[assignment]
+    pricing: dict[str, dict[str, float]] | None = None
 
     def __post_init__(self) -> None:
         if not self.pricing or not isinstance(self.pricing, dict):
@@ -44,7 +44,7 @@ class CanaryLimits:
                 raise ValueError(f"pricing for {model!r} must define both 'input' and 'output' rates")
 
     def token_cost(self, model: str, tokens_in: int, tokens_out: int) -> float:
-        rates = self.pricing[model]
+        rates = (self.pricing or {})[model]
         return (tokens_in * rates["input"] + tokens_out * rates["output"]) / 1_000_000
 
 
@@ -70,6 +70,16 @@ class CanaryBudget:
         self._in_flight: dict[str, int] = {}
         self._frozen: dict[str, Any] | None = None
         self._started = time.monotonic()
+        # Ride-along telemetry attached by the run installer (launch.py):
+        # latency samples and measured-vs-estimated token accounting live on
+        # the wrapper but are read back off the budget post-kill.
+        self.latencies: list[float] = []
+        self.token_accounting: dict[str, int] = {
+            "measured_calls": 0,
+            "estimated_calls": 0,
+            "tokens_measured": 0,
+            "tokens_estimated": 0,
+        }
 
     def freeze_usage(self) -> None:
         """Pin the current usage as final (post-kill manifest stability)."""
@@ -159,7 +169,7 @@ class CanaryBudget:
     def record(self, call_id: str, ok: bool, tokens_in: int, tokens_out: int, latency_s: float) -> None:
         self._calls += 1
         self._tokens += tokens_in + tokens_out
-        model = call_id if call_id in self.limits.pricing else _default_model(self.limits)
+        model = call_id if call_id in (self.limits.pricing or {}) else _default_model(self.limits)
         self._cost += self.limits.token_cost(model, tokens_in, tokens_out)
         if not ok:
             self._errors += 1
@@ -227,7 +237,7 @@ def wrap_call_llm(base, budget: CanaryBudget, *, dry_run: bool = False):
 
 
 def _default_model(limits: CanaryLimits) -> str:
-    return next(iter(limits.pricing))
+    return next(iter(limits.pricing or {}))
 
 
 def run_canary(

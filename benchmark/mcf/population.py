@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import csv
 import random
-from typing import Any
+from typing import Any, cast
 
 from gaworld.city.bundle import CityNotFoundError, resolve_city
 
@@ -113,8 +113,8 @@ def resolve_population(population: dict[str, Any]) -> dict[str, Any]:
             )
     elif method == "random":
         try:
-            size = int(population.get("sample_size"))
-            seed = int(population.get("sample_seed"))
+            size = int(cast(Any, population.get("sample_size")))
+            seed = int(cast(Any, population.get("sample_seed")))
         except (TypeError, ValueError):
             raise PopulationError("random selection needs integer sample_size and sample_seed") from None
         if size < 1:

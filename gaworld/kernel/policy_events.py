@@ -8,10 +8,12 @@ the legacy text-feed behaviour (``gaworld/policy/plugin.py`` untouched).
 
 from __future__ import annotations
 
+from typing import Any
+
 _SUPPORTED = {"set_agent_state"}
 
 
-def validate_policy_events(events) -> None:
+def validate_policy_events(events: list[dict] | None) -> None:
     """Fail fast at run start: every declarative entry must use a supported
     operation. Raises before day 1 instead of aborting a run mid-tick.
     """
@@ -24,7 +26,7 @@ def validate_policy_events(events) -> None:
             )
 
 
-def execute_policy_events(ctx, events, day, time_str) -> int:
+def execute_policy_events(ctx: Any, events: list[dict] | None, day: int, time_str: str) -> int:
     """Fire the entries whose day/time match this tick; return how many fired.
 
     Only the matched entries are executed; anything else is left untouched.

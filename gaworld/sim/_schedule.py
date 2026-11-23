@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from collections.abc import Callable
 from typing import Any
 
 from gaworld.settings import CONFIG
@@ -339,11 +340,7 @@ def ensure_sleep_in_schedule(agent: dict[str, Any], schedule: list[tuple[str, st
     # unscheduled night slots before the first morning slot (>= 07:00); all
     # kept times already exist in the schedule, nothing is invented.
     head_index = next((i for i, (t, _) in enumerate(schedule) if t == "00:00"), None)
-    if (
-        head_index is not None
-        and not is_sleep_activity(schedule[head_index][1])
-        and mcf_realism_enabled()
-    ):
+    if head_index is not None and not is_sleep_activity(schedule[head_index][1]) and mcf_realism_enabled():
         schedule = list(schedule)
         schedule[head_index] = ("00:00", "睡觉")
         if first_morning_index is not None:
@@ -386,10 +383,8 @@ def ensure_sleep_in_schedule(agent: dict[str, Any], schedule: list[tuple[str, st
     sleep_minutes = _time_str_to_minutes(sleep_time)
     if sleep_minutes is None:
         sleep_minutes = 23 * 60 + 30
-    max_minutes = max(
-        (_time_str_to_minutes(t) for t in used_times if _time_str_to_minutes(t) is not None),
-        default=None,
-    )
+    parsed_used = [m for t in used_times if (m := _time_str_to_minutes(t)) is not None]
+    max_minutes = max(parsed_used, default=None)
     if max_minutes is not None and max_minutes >= sleep_minutes:
         sleep_minutes = min(max_minutes + 60, 23 * 60 + 59)
     candidate = _minutes_to_time_str(sleep_minutes)
@@ -446,8 +441,8 @@ def replan_affected_interval(
     start_time: str,
     end_time: str,
     *,
-    is_affected,
-    relocate=None,
+    is_affected: Callable[[str, str], bool],
+    relocate: Callable[[str, str], str] | None = None,
     defer: bool = True,
     defer_gap_minutes: int = 30,
 ) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
@@ -642,9 +637,12 @@ def _align_daily_planning_start_time(
 ) -> list[tuple[str, str]]:
     if not schedule:
         return []
-    minute_points = [_time_str_to_minutes(t) for t, _ in schedule]
-    if any(m is None for m in minute_points):
-        return list(schedule)
+    minute_points: list[int] = []
+    for t, _ in schedule:
+        m = _time_str_to_minutes(t)
+        if m is None:
+            return list(schedule)
+        minute_points.append(m)
 
     start_idx = 0
     for idx, (_, activity) in enumerate(schedule):
@@ -838,9 +836,12 @@ def _jitter_schedule_times(
 ) -> list[tuple[str, str]]:
     if not base_schedule:
         return []
-    base_minutes = [_time_str_to_minutes(t) for t, _ in base_schedule]
-    if any(m is None for m in base_minutes):
-        return list(base_schedule)
+    base_minutes: list[int] = []
+    for t, _ in base_schedule:
+        m = _time_str_to_minutes(t)
+        if m is None:
+            return list(base_schedule)
+        base_minutes.append(m)
     adjusted_minutes: list[int] = []
     prev = None
     for m in base_minutes:
@@ -919,13 +920,11 @@ def _has_enough_schedule_anchors(
     if max_shift_minutes <= 0:
         return True
     base_minutes = [
-        _time_str_to_minutes(t)
+        m
         for t, activity in base_schedule
-        if _time_str_to_minutes(t) is not None and not is_sleep_activity(activity)
+        if not is_sleep_activity(activity) and (m := _time_str_to_minutes(t)) is not None
     ]
-    candidate_minutes = [
-        _time_str_to_minutes(t) for t, _ in candidate_schedule if _time_str_to_minutes(t) is not None
-    ]
+    candidate_minutes = [m for t, _ in candidate_schedule if (m := _time_str_to_minutes(t)) is not None]
     if not base_minutes or not candidate_minutes:
         return True
     close_count = 0
@@ -988,7 +987,7 @@ def normalize_flexible_schedule(
 # Where an agent's day stands at a given time (moved from generative_city_sim).
 
 
-def _schedule_pairs(schedule):
+def _schedule_pairs(schedule: list[dict[str, str] | tuple[str, str]] | None) -> list[tuple[str, str]]:
     """Normalize schedule entries to (time, activity) tuples.
 
     The pipeline's real schedules (scope.schedule_map) carry dict entries
@@ -1006,21 +1005,23 @@ def _schedule_pairs(schedule):
     return pairs
 
 
-def _schedule_like(schedule, pairs):
+def _schedule_like(
+    schedule: list[dict[str, str] | tuple[str, str]] | None, pairs: list[tuple[str, str]]
+) -> list[Any]:
     """Re-dict-ify ``pairs`` when the input schedule was dict-format."""
     if schedule and all(isinstance(e, dict) for e in schedule):
         return [{"time": t, "activity": a} for t, a in pairs]
     return pairs
 
 
-def get_activity_for_time(schedule, time_str):
+def get_activity_for_time(schedule: list[dict[str, str] | tuple[str, str]] | None, time_str: str) -> str:
     if not schedule:
         return "个人时间"
     pairs = _schedule_pairs(schedule)
     current_minutes = _time_str_to_minutes(time_str)
     if current_minutes is None:
         return pairs[-1][1]
-    last_activity = None
+    last_activity: str | None = None
     for t, activity in pairs:
         t_minutes = _time_str_to_minutes(t)
         if t_minutes is None:
@@ -1032,7 +1033,12 @@ def get_activity_for_time(schedule, time_str):
     return last_activity or "个人时间"
 
 
-def apply_schedule_override(schedule, time_str, activity, duration_minutes: int | None = None):
+def apply_schedule_override(
+    schedule: list[dict[str, str] | tuple[str, str]] | None,
+    time_str: str,
+    activity: str,
+    duration_minutes: int | None = None,
+) -> list[Any]:
     if not schedule:
         return [(time_str, activity)]
     current = get_activity_for_time(schedule, time_str)
@@ -1070,7 +1076,7 @@ def apply_schedule_override(schedule, time_str, activity, duration_minutes: int 
     return _schedule_like(schedule, updated)
 
 
-def build_schedule_map(schedules):
+def build_schedule_map(schedules: dict | None) -> dict:
     """Per-agent schedules, sorted by time and checked against the clock.
 
     This is the funnel every day's schedule passes through (the day-1

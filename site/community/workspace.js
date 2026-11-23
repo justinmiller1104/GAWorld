@@ -118,6 +118,7 @@ var gwURL = globalThis.GAWorldURL ? globalThis.GAWorldURL.url : function (value)
   function account() {
     var u = state.user;
     app.innerHTML = gwHTML(title('账号设置', '公开资料与私人账号设置分开管理。') + '<form id="profileForm" class="form"><label for="displayName">公开显示名</label><input name="display_name" id="displayName" maxlength="32" required value="' + e(u.display_name || u.nickname) + '"><p class="hint">登录用户名：' + e(u.nickname) + '（保持不变）</p><label for="bio">简介</label><textarea name="bio" id="bio" maxlength="2000">' + e(u.bio || '') + '</textarea><label for="interests">研究兴趣</label><input name="interests" id="interests" maxlength="500" value="' + e(u.interests || '') + '"><label for="avatar">头像 HTTPS 地址</label><input name="avatar" id="avatar" value="' + e(u.avatar || '') + '"><div class="actions"><button class="button">保存公开资料</button>' + (u.public_id ? '<a class="button secondary" href="/people/' + e(u.public_id) + '">查看个人主页 ↗</a>' : '') + '</div></form><section class="thread"><h2>登录与验证</h2><p>邮箱：' + e(u.email || '邀请码账号未绑定邮箱') + ' · ' + (u.email_verified ? '已验证' : '待验证') + '</p>' + (!u.email_verified ? '<button class="button secondary" data-action="resend">重新发送验证邮件</button>' : '') + '<form id="passwordForm" class="form"><label for="oldPassword">当前密码</label><input id="oldPassword" name="old" type="password" autocomplete="current-password" required><label for="newPassword">新密码</label><input id="newPassword" name="new" type="password" minlength="8" autocomplete="new-password" required><div class="actions"><button class="button secondary">修改密码</button></div></form><div class="toolbar"><button class="button secondary" data-action="close-sessions">退出其他设备</button><button class="button secondary" data-action="logout">退出当前账号</button><a href="/console#settings">模型与用量设置 ↗</a></div></section>');
+    window.renderAPITokens(app, state.worlds.filter(function (world) { return world.owner_id === u.id; }));
     document.getElementById('profileForm').onsubmit = async function (event) { event.preventDefault(); try { await C.api('POST','/api/auth/profile',Object.fromEntries(new FormData(this))); C.toast('公开资料已更新'); } catch (err) { C.error(err); } };
     document.getElementById('passwordForm').onsubmit = async function (event) { event.preventDefault(); try { await C.api('POST','/api/auth/password',Object.fromEntries(new FormData(this))); C.toast('密码已修改，其他会话已退出'); this.reset(); } catch (err) { C.error(err); } };
   }
@@ -151,10 +152,19 @@ var gwURL = globalThis.GAWorldURL ? globalThis.GAWorldURL.url : function (value)
     } catch (err) { C.error(err); } finally { b.disabled = false; }
   });
   C.ready.then(async function (me) {
-    if (!me.user) { app.innerHTML = gwHTML(C.empty('请以账号登录', me.mode === 'single' ? '当前部署尚未启用账号。管理员初始化后可使用个人工作空间。' : '登录后进入自己的研究与仿真工作台。') + '<a class="button" href="/login">登录</a>'); return; }
+    if (C.redirecting) return;
+    if (me.mode === 'single' || (me.user && me.user.role === 'admin' && !me.user.id)) {
+      app.replaceChildren(document.getElementById(view === 'overview' ? 'localWorkspace' : 'accountWorkspace').content.cloneNode(true));
+      var note = app.querySelector('.workspace-local-note');
+      if (note && me.mode !== 'single') {
+        note.dataset.i18n = 'workspace.operator_note';
+        note.textContent = '当前以管理员身份访问，尚未关联个人账号。你可以继续使用研究和仿真工具。';
+      }
+      if (window.applyTranslations) window.applyTranslations();
+      return;
+    }
+    if (!me.user) { app.innerHTML = gwHTML(C.empty('请以账号登录', '登录后进入自己的研究与仿真工作台。') + '<a class="button" href="/login">登录</a>'); return; }
     state = await C.api('GET','/api/workspace/overview'); await C.bindWorld(state.current_world);
-    document.getElementById('moderationLink').hidden = !(state.user.role === 'admin' || state.user.moderator);
-    document.querySelectorAll('[data-view]').forEach(function (a) { a.classList.toggle('active',a.dataset.view === view); });
     var renderers = { overview:overview,research:research,worlds:worlds,publish:publishForm,publications:publications,bookmarks:bookmarks,notifications:notifications,account:account,moderation:moderation };
     await (renderers[view] || overview)();
   }).catch(function (err) { app.innerHTML = gwHTML(C.empty('工作空间暂不可用',err.message)); });

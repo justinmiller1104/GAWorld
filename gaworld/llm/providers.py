@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 import re
@@ -9,7 +10,10 @@ from typing import Any
 
 import requests
 
+from gaworld.llm import call_scope
+from gaworld.llm.http_transport import post as http_post
 from gaworld.llm.run_state import (
+    ResearchBudgetExceeded,
     before_attempt,
     current_ledger,
     provider_context,
@@ -27,14 +31,23 @@ _LOG = get_logger("gaworld.llm")
 def _post(*args: Any, **kwargs: Any) -> Any:
     """Count actual HTTP submissions, independently from router chains."""
     ledger = current_ledger()
+    kwargs["timeout"] = call_scope.request_timeout(kwargs.get("timeout"))
+    budgeted = ledger.reserve_http_attempt() if ledger is not None else False
+    if budgeted:
+        # requests would otherwise submit redirected POSTs outside the
+        # reservation boundary. Use the configured final generation URL.
+        kwargs["allow_redirects"] = False
     try:
-        response = requests.post(*args, **kwargs)
+        response = http_post(*args, **kwargs)
     except requests.RequestException:
         if ledger is not None:
             ledger.http_attempt(ok=False)
         raise
     if ledger is not None:
-        ledger.http_attempt(ok=response.status_code < 400)
+        ledger.http_attempt(ok=response.status_code < (300 if budgeted else 400))
+    if budgeted and 300 <= response.status_code < 400:
+        response.close()
+        raise requests.HTTPError("模型接口重定向；请直接配置最终生成接口地址。", response=response)
     return response
 
 
@@ -87,6 +100,27 @@ def _clean_images(images: Any) -> list[dict[str, Any]]:
             continue
         cleaned.append({"media_type": str(item.get("media_type") or "image/png"), "data": data})
     return cleaned
+
+
+def _accepted_overrides(provider: Any, overrides: dict[str, Any]) -> dict[str, Any]:
+    """The overrides a provider's ``call`` can actually take.
+
+    A provider-shaped object may still take the prompt alone — that is what the
+    test doubles in the suite look like — so an override the backend does not
+    declare is dropped rather than raising a ``TypeError`` in the middle of a
+    run. The built-in backends all declare every override they honour.
+    """
+    call = getattr(provider, "call", None)
+    if call is None:
+        return dict(overrides)
+    try:
+        signature = inspect.signature(call)
+    except (TypeError, ValueError):
+        return dict(overrides)
+    parameters = signature.parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return dict(overrides)
+    return {key: value for key, value in overrides.items() if key in parameters}
 
 
 # ---------------------------------------------------------------------
@@ -198,6 +232,10 @@ def _note_truncated(provider: str, reason: Any, max_tokens: Any) -> None:
 
 
 def _is_retryable(exc: BaseException) -> bool:
+    from gaworld.llm.diagnostics import is_quota_error
+
+    if is_quota_error(exc):
+        return False
     if isinstance(exc, requests.exceptions.HTTPError):
         resp = getattr(exc, "response", None)
         if resp is not None and resp.status_code in _RETRYABLE_HTTP:
@@ -213,10 +251,15 @@ def _retrying(
     delay = 0.6
     last_exc: BaseException | None = None
     for attempt in range(1, max(1, attempts) + 1):
+        call_scope.check()
         try:
             before_attempt(provider)
-            return call()
+            call_scope.check()
+            result = call()
+            call_scope.check()
+            return result
         except Exception as exc:
+            exc.llm_attempts = attempt
             last_exc = exc
             if attempt >= attempts or not _is_retryable(exc):
                 terminal_error(exc, provider)
@@ -263,7 +306,7 @@ class OllamaProvider:
             return bool(self.vision)
         return _model_looks_multimodal(self.model)
 
-    def call(self, prompt, system=None, temperature=None, images=None, max_tokens=None):
+    def call(self, prompt, system=None, temperature=None, images=None, max_tokens=None, seed=None):
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -284,6 +327,11 @@ class OllamaProvider:
             options["temperature"] = float(temperature)
         if max_tokens is not None:
             options["num_predict"] = int(max_tokens)
+        # A seed makes the server's sampling reproducible. It is forwarded only
+        # when the caller asked for one: an experiment that pins its seed wants
+        # the same draw again, and every other call keeps the server's default.
+        if seed is not None:
+            options["seed"] = int(seed)
         if options:
             payload["options"] = options
 
@@ -300,6 +348,7 @@ class OllamaProvider:
                     r.encoding = "utf-8"
                     parts: list[str] = []
                     for line in r.iter_lines(decode_unicode=True):
+                        call_scope.check()
                         if not line:
                             continue
                         # Use stdlib json instead of requests' private complexjson alias.
@@ -387,7 +436,7 @@ class OpenAIProvider(_CredentialProvider):
             return bool(self.vision)
         return _model_looks_multimodal(self.model)
 
-    def call(self, prompt, system=None, temperature=None, images=None, max_tokens=None):
+    def call(self, prompt, system=None, temperature=None, images=None, max_tokens=None, seed=None):
         headers = {
             "Authorization": f"Bearer {self._request_key()}",
             "Content-Type": "application/json",
@@ -426,6 +475,10 @@ class OpenAIProvider(_CredentialProvider):
         effective_temperature = self.temperature if temperature is None else temperature
         if effective_temperature is not None:
             payload["temperature"] = float(effective_temperature)
+        # The endpoint's seed: a best-effort request for the same draw again.
+        # Forwarded only when the caller asked for one.
+        if seed is not None:
+            payload["seed"] = int(seed)
 
         def _do_streaming() -> str:
             stream_payload = dict(payload, stream=True)
@@ -442,6 +495,7 @@ class OpenAIProvider(_CredentialProvider):
                 r.encoding = "utf-8"
                 parts: list[str] = []
                 for raw_line in r.iter_lines(decode_unicode=True):
+                    call_scope.check()
                     if not raw_line:
                         continue
                     line = raw_line.strip()
@@ -608,7 +662,12 @@ class AnthropicProvider(_CredentialProvider):
             return bool(self.vision)
         return _model_looks_multimodal(self.model)
 
-    def call(self, prompt, system=None, temperature=None, images=None, max_tokens=None):
+    def call(self, prompt, system=None, temperature=None, images=None, max_tokens=None, seed=None):
+        # The Anthropic Messages API accepts no seed parameter, so one is
+        # accepted here and deliberately not sent: sending it would be a
+        # rejected request, not a reproducible one. ``seed`` stays in the
+        # signature so the router can pass one without special-casing this
+        # backend.
         if not self._request_key():
             env_names = ", ".join(self.api_key_envs) or "ANTHROPIC_API_KEY"
             raise ValueError(f"Anthropic provider API key not found. Set one of: {env_names}")
@@ -1125,6 +1184,7 @@ class LLMRouter:
         max_tokens=None,
         failure_policy=None,
         fallback_order=None,
+        seed=None,
     ):
         resolved = resolve_llm_target(self.routing, task=task, agent_id=agent_id, provider=provider)
         primary = resolved["provider"] or next(iter(self.providers))
@@ -1181,6 +1241,8 @@ class LLMRouter:
         cleaned_images = _clean_images(images)
         if cleaned_images:
             overrides["images"] = cleaned_images
+        if seed is not None:
+            overrides["seed"] = int(seed)
 
         call_id = uuid.uuid4().hex[:8]
         prompt_chars = len(prompt or "")
@@ -1188,11 +1250,14 @@ class LLMRouter:
         last_exc: BaseException | None = None
         failures: list[str] = []
         for index, provider_name in enumerate(chain):
+            call_scope.check()
             started = time.perf_counter()
             try:
                 with provider_context(provider_name):
                     before_attempt(provider_name)
-                    result = self.providers[provider_name].call(prompt, **overrides)
+                    result = self.providers[provider_name].call(
+                        prompt, **_accepted_overrides(self.providers[provider_name], overrides)
+                    )
                 if not str(result or "").strip():
                     raise _empty_completion(provider_name)
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -1222,6 +1287,10 @@ class LLMRouter:
                     elapsed_ms,
                 )
                 return result
+            except ResearchBudgetExceeded:
+                # This is admission control, not a provider failure. A
+                # fallback would bypass the approved attempt-wide limit.
+                raise
             except Exception as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 # Record the failure attempt. A subsequent fallback
@@ -1352,6 +1421,7 @@ def call_llm(
     allow_fallback=True,
     images=None,
     max_tokens=None,
+    seed=None,
 ):
     """Public helper for model calls used across the simulator.
 
@@ -1381,22 +1451,31 @@ def call_llm(
     decision, a short profile — so a caller that needs a whole structured
     document has to say so, or the provider truncates it mid-JSON and every
     parser downstream sees malformed input rather than a budget problem.
+
+    ``seed`` asks the provider for the same draw again. It reaches the
+    OpenAI-compatible and Ollama backends, which both accept one; the
+    Anthropic Messages API has no such parameter, so there it is accepted and
+    not sent. Either way it is a request, not a guarantee — an endpoint may
+    still vary a draw — so a result that must be reproducible has to record
+    what the seed covered rather than assume it covered the answers.
     """
     from gaworld.accounts.community import begin_model_call, settle_call
 
     reservation = begin_model_call()
     try:
-        return LLM_ROUTER.call(
-            prompt,
-            task=task,
-            agent_id=agent_id,
-            provider=provider,
-            system=system,
-            temperature=temperature,
-            allow_fallback=allow_fallback,
-            images=images,
-            max_tokens=max_tokens,
-        )
+        call_kwargs: dict[str, Any] = {
+            "task": task,
+            "agent_id": agent_id,
+            "provider": provider,
+            "system": system,
+            "temperature": temperature,
+            "allow_fallback": allow_fallback,
+            "images": images,
+            "max_tokens": max_tokens,
+        }
+        if seed is not None:
+            call_kwargs["seed"] = int(seed)
+        return LLM_ROUTER.call(prompt, **call_kwargs)
     finally:
         if reservation is not None:
             settle_call(*reservation)

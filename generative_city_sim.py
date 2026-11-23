@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+from gaworld.core.performance import isolate_timings
 from gaworld.core.run_manifest import start_manifest
 from gaworld.core.runner import parallel_map, resolve_max_workers
 
@@ -2365,6 +2366,7 @@ def _run_recap(agents, initial_snapshots, state_history, start_day, last_day, en
         print(f"⚠️ 仿真总结生成失败：{exc}")
 
 
+@isolate_timings
 def run_simulation():
     validate_runtime_config(CONFIG)
     # Fail fast on malformed policy_events before day 1 (M6), not mid-run.
@@ -2554,7 +2556,7 @@ def run_simulation():
     # The selected city's industry profile rides along on the background so every
     # cognition prompt knows what kind of place this is. Empty without a city.
     _city_context = _load_city_context(CONFIG)
-    _city_block = _city_context.profile.prompt_block()
+    _city_block = _city_context.prompt_block()
     if _city_block:
         background_text = f"{background_text} {_city_block}".strip()
     news_sources = load_news_sources(NEWS_SOURCES_PATH) if NEWS_ENABLED else []

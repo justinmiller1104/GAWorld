@@ -188,10 +188,10 @@ def _repo_path(value):
     return (Path(paths.REPO_ROOT) / path).resolve()
 
 
-def _organization_method(identifier, version):
+def _organization_method(identifier, version, slots=None):
     from gaworld.apps.organization_methods_api import resolve
 
-    return resolve(identifier, version)
+    return resolve(identifier, version, slots)
 
 
 def _collaboration_config():
@@ -1583,6 +1583,11 @@ class DashboardHandler(SubpathMixin, PublicMediaMixin, SimpleHTTPRequestHandler)
         ):
             self._deny(404, "Not found")
             return True
+        from gaworld.accounts.api_token_guard import guard as guard_api_token
+
+        verdict = guard_api_token(self, path)
+        if verdict is not None:
+            return verdict
         token = os.environ.get("GAWORLD_DASHBOARD_TOKEN", "").strip()
         if not token and self.accounts is None:
             return False
@@ -1690,7 +1695,7 @@ class DashboardHandler(SubpathMixin, PublicMediaMixin, SimpleHTTPRequestHandler)
             self.end_headers()
             return "answered"
         header = self.headers.get("Authorization", "")
-        if header.startswith("Bearer ") and hmac.compare_digest(header[7:].strip(), token):
+        if header.lower().startswith("bearer ") and hmac.compare_digest(header[7:].strip(), token):
             return "ok"
         morsel = SimpleCookie(self.headers.get("Cookie", "")).get(self.AUTH_COOKIE)
         if morsel is not None and hmac.compare_digest(morsel.value, token):
@@ -1708,7 +1713,7 @@ class DashboardHandler(SubpathMixin, PublicMediaMixin, SimpleHTTPRequestHandler)
     def end_headers(self):
         # The dashboard JS/CSS and trace JSON change between runs; without
         # this, browsers serve stale assets from memory cache indefinitely.
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-store" if "/api/auth/" in self.path else "no-cache")
         super().end_headers()
 
     def _json_response(self, payload, status=200, headers=None):
@@ -1963,6 +1968,37 @@ class DashboardHandler(SubpathMixin, PublicMediaMixin, SimpleHTTPRequestHandler)
 
             payload, status = autobiography_api.handle_get(path, query)
             return self._json_response(payload, status=status)
+        if path.startswith("/api/agents/") and "/life-prediction/jobs/" in path:
+            from gaworld.apps import life_prediction_api
+
+            payload, status = life_prediction_api.handle_get(path, query)
+            return self._json_response(payload, status=status)
+        if path.startswith("/api/agents/") and path.endswith("/life-prediction/download"):
+            from gaworld.apps import life_prediction_api
+
+            filename, content_type, body, status = life_prediction_api.handle_download(path)
+            if status != 200:
+                return self._json_response(
+                    {"error": "尚未生成人生预测"} if status == 404 else {"error": body},
+                    status=status,
+                )
+            data = body.encode("utf-8") if isinstance(body, str) else body
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header(
+                "Content-Disposition",
+                f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename}",
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path.startswith("/api/agents/") and path.endswith("/life-prediction"):
+            from gaworld.apps import life_prediction_api
+
+            payload, status = life_prediction_api.handle_get(path, query)
+            return self._json_response(payload, status=status)
         if path.startswith("/api/agents/") and path.endswith("/detail"):
             agent_id = path.split("/")[3]
             detail = residents.agent_detail(agent_id)
@@ -2076,7 +2112,8 @@ class DashboardHandler(SubpathMixin, PublicMediaMixin, SimpleHTTPRequestHandler)
             )
         if store is not None:
             if path != "/api/play/claim":  # lease renewals every 30 s; play_api audits the first claim
-                store.audit(self.user, "POST", path)
+                token_id = (self.user or {}).get("api_token_id", "")
+                store.audit(self.user, "POST", path + (f" token_id={token_id}" if token_id else ""))
             refusal = self._quota_refusal(path)
             if refusal:
                 return self._json_response({"error": refusal}, status=429)
@@ -2136,6 +2173,11 @@ class DashboardHandler(SubpathMixin, PublicMediaMixin, SimpleHTTPRequestHandler)
             from gaworld.apps import autobiography_api
 
             body, status = autobiography_api.handle_post(path, payload)
+            return self._json_response(body, status=status)
+        if path.startswith("/api/agents/") and path.endswith("/life-prediction"):
+            from gaworld.apps import life_prediction_api
+
+            body, status = life_prediction_api.handle_post(path, payload)
             return self._json_response(body, status=status)
         if path.startswith("/api/agents/") and path.endswith("/goals"):
             agent_id = path.split("/")[3]
@@ -2208,6 +2250,7 @@ class DashboardHandler(SubpathMixin, PublicMediaMixin, SimpleHTTPRequestHandler)
                             "organization_method": _organization_method(
                                 _collaboration_text(payload, "organization_method_id"),
                                 _collaboration_integer(payload, "organization_method_version", default=1),
+                                slots=len({int(agent_id) for agent_id in agent_ids}),
                             )
                         }
                         if payload.get("organization_method_id")

@@ -20,6 +20,7 @@ import random
 import unittest
 
 from gaworld.behavior.dynamic import (
+    _ACTIVE_INTERRUPTS,
     COMMITMENT_KEYWORDS,
     EVENT_CASCADES,
     SPONTANEOUS_POOLS,
@@ -536,6 +537,10 @@ class TestEvaluateStepDynamics(unittest.TestCase):
         self.assertTrue(found_encounter)
 
     def test_need_based_with_hunger(self):
+        # Cooldown suppression now runs in default runs (repair H5); stale
+        # winner records from earlier tests must not suppress this test's
+        # candidates.
+        _ACTIVE_INTERRUPTS.clear()
         random.seed(42)
         agent = _agent(state={"hunger": 0.8, "energy": 0.3, "self_control": 0.3})
         # Run several seeds — hunger+fatigue should sometimes win

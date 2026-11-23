@@ -10,6 +10,7 @@ import json
 import os
 
 from gaworld.settings import CONFIG
+from gaworld.settings.behavior import mcf_realism_enabled
 
 
 def _memory_dir(cfg=None):
@@ -122,6 +123,9 @@ def _write_span_row(agent_id, span, cfg=None):
 def record_activity_span(agent_id, day, time_str, activity, location="", purpose="", cfg=None):
     """Note the agent's current activity; when it differs from the open span's
     activity, close the open span at this tick and open a new one."""
+    # Span rows are an MCF realism artifact; a default run writes none.
+    if not mcf_realism_enabled():
+        return
     open_span = _OPEN_SPANS.get(agent_id)
     if open_span is not None and open_span["activity"] == activity and open_span["day"] == day:
         return
@@ -140,6 +144,9 @@ def record_activity_span(agent_id, day, time_str, activity, location="", purpose
 def close_agent_span(agent_id, day, time_str, cfg=None):
     """Close the agent's open span at run end (or day end) — the final span
     must not stay implicit."""
+    if not mcf_realism_enabled():
+        _OPEN_SPANS.pop(agent_id, None)
+        return
     open_span = _OPEN_SPANS.pop(agent_id, None)
     if open_span is None:
         return

@@ -36,6 +36,7 @@ import pytest
 
 from benchmark.mcf.time_use import compute_observed_minutes
 from gaworld.behavior.dynamic import (
+    _ACTIVE_INTERRUPTS,
     activity_commitment,
     evaluate_step_dynamics,
 )
@@ -202,6 +203,9 @@ def test_case4_night_weather_suggestion_over_sleep_is_rejected():
 def test_case4b_same_weather_candidate_over_daytime_activity_is_allowed():
     """The identical candidate over a daytime 通勤 slot is acceptable — the
     night rejection must come from sleep commitment, not a blanket weather ban."""
+    # Cooldown suppression now runs in default runs (repair H5); stale winner
+    # records leaked from other test files must not suppress this candidate.
+    _ACTIVE_INTERRUPTS.clear()
     random.seed(11)
     result = _step(_stub_agent(), "14:00", "通勤", [MEIYU_EVENT])
     assert result["changed"], (
@@ -300,6 +304,7 @@ def test_case8_spontaneous_leisure_switch_happens_at_most_once_per_window():
 def test_case9_same_weather_event_accepted_exactly_once_in_five_ticks():
     """The same (source, kind) minor event on 5 consecutive ticks yields
     exactly 1 accepted interrupt and 4 no-change results."""
+    _ACTIVE_INTERRUPTS.clear()
     accepted = 0
     for tick in range(5):
         random.seed(300 + tick)

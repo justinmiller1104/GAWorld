@@ -174,8 +174,10 @@ def test_effect_verdict_not_max_abs_diff_headline(tmp_path):
     for key in report["effect"]:
         assert "max_abs_diff" not in key, f"effect[{key!r}] keeps max_abs_diff as headline"
     assert "post_max_abs_diff" not in report["effect"]
-    # here post disagreement is exactly 0 → a neutral verdict
-    assert report["effect"]["verdict"] in NEUTRAL_VERDICTS
+    # here post disagreement is exactly 0 → a neutral verdict (the fixture
+    # is 2 agents × 3 days, below MIN_COMPARISON_DAYS/POPULATION, so the
+    # M2 invariant maps UNRELIABLE to insufficient_data — still headline-safe).
+    assert report["effect"]["verdict"] in (*NEUTRAL_VERDICTS, "insufficient_data")
 
 
 # ---------------------------------------------------------------------------

@@ -1231,14 +1231,13 @@ def _apply_interrupt_cooldown(
     record. Expiry is natural: a record is dropped once now is past its
     window.
     """
-    # Phase-2.1 realism change, gated: with the gate off there is no
-    # cooldown suppression at all (pre-change dynamics).
-    if not mcf_realism_enabled():
-        return candidates
     now = _time_to_minutes(time_str)
     if now is None:
         return candidates
-    agent_key = agent.get("agent_id") if isinstance(agent, dict) else None
+    agent_key = None
+    if isinstance(agent, dict):
+        # Pipeline agents carry "id"; legacy callers pass "agent_id".
+        agent_key = agent.get("id") if agent.get("id") is not None else agent.get("agent_id")
     if agent_key is None:
         return candidates
     records = _ACTIVE_INTERRUPTS.get(agent_key)
@@ -1412,7 +1411,9 @@ def evaluate_step_dynamics(
         }
 
     now_min = _time_to_minutes(time_str)
-    agent_key = agent.get("agent_id") if isinstance(agent, dict) else None
+    agent_key = None
+    if isinstance(agent, dict):
+        agent_key = agent.get("id") if agent.get("id") is not None else agent.get("agent_id")
     if now_min is not None and agent_key is not None:
         _ACTIVE_INTERRUPTS.setdefault(agent_key, {})[f"{winner.source}:{winner.kind}"] = {
             "source": winner.source,

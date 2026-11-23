@@ -30,6 +30,8 @@ Deterministic only: no LLM, no network, no simulation run.
 
 from __future__ import annotations
 
+import pytest
+
 from gaworld.sim._schedule import (
     ensure_sleep_in_schedule,
     get_activity_for_time,
@@ -38,6 +40,14 @@ from gaworld.sim._schedule import (
 from gaworld.sim._utils import _build_time_grid
 
 DEFAULT_AGENT: dict = {"job": "职员", "personality": "", "daily_life": "", "values": "", "work_style": ""}
+
+
+# Gated (GREEN phase 1, task 3878): the head-slot conversion this module pins
+# is an MCF-realism behavior now behind mcf_realism_enabled(); these tests
+# exercise the gate-ON path, default runs keep the pre-change schedule.
+@pytest.fixture(autouse=True)
+def _mcf_realism_on(monkeypatch):
+    monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
 
 # The Phase 1.8 fixture shape (no 00:00 slot at all) — control group.
 PILOT_DAY_SCHEDULE: list[tuple[str, str]] = [

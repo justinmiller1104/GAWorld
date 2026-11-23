@@ -8,6 +8,7 @@ venue closed), and their pickup inside evaluate_step_dynamics.
 import unittest
 
 from gaworld.behavior.dynamic import (
+    _ACTIVE_INTERRUPTS,
     _classify_event_type,
     evaluate_step_dynamics,
     generate_environment_interrupts,
@@ -99,6 +100,9 @@ class TestLocalPhysicalInterrupts(unittest.TestCase):
         self.assertEqual(generate_local_physical_interrupts(_agent(), {"location": "", "crowding": "非常拥挤"}), [])
 
     def test_evaluate_step_dynamics_picks_up_local_physical(self):
+        # Cooldown suppression now runs in default runs (repair H5); stale
+        # winner records from earlier tests must not suppress this candidate.
+        _ACTIVE_INTERRUPTS.clear()
         agent = _agent()
         agent["_local_physical"] = {"location": "Office", "in_transit": False,
                                     "crowding": "非常拥挤", "occupancy_ratio": 0.98, "is_open": True}

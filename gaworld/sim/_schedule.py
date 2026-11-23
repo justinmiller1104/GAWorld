@@ -339,7 +339,11 @@ def ensure_sleep_in_schedule(agent: dict[str, Any], schedule: list[tuple[str, st
     # unscheduled night slots before the first morning slot (>= 07:00); all
     # kept times already exist in the schedule, nothing is invented.
     head_index = next((i for i, (t, _) in enumerate(schedule) if t == "00:00"), None)
-    if head_index is not None and not is_sleep_activity(schedule[head_index][1]):
+    if (
+        head_index is not None
+        and not is_sleep_activity(schedule[head_index][1])
+        and mcf_realism_enabled()
+    ):
         schedule = list(schedule)
         schedule[head_index] = ("00:00", "睡觉")
         if first_morning_index is not None:
@@ -400,7 +404,9 @@ def ensure_sleep_in_schedule(agent: dict[str, Any], schedule: list[tuple[str, st
     # The day grid starts at 00:00, so without head coverage the whole
     # 00:00–first-slot window falls into the 个人时间 fallback and agents
     # wander all night; stretch the rest window back over midnight.
-    if "00:00" not in {t for t, _ in schedule}:
+    # Gated (mcf_realism): a default run keeps the pre-change schedule — no
+    # synthetic head slot.
+    if "00:00" not in {t for t, _ in schedule} and mcf_realism_enabled():
         schedule.append(("00:00", "睡前"))
     schedule.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
     return schedule

@@ -81,14 +81,28 @@ def compare_arms(baseline_dir, intervention_dir, intervention_day, intervention_
     first_divergence_tick = _first_divergence_tick(baseline_records, intervention_records)
     if intervention_time is not None:
         trigger_minute = time_to_minute(intervention_time)
+        pairs = sorted(
+            {(k[1], k[2]) for k in baseline_records["records"]}
+            | {(k[1], k[2]) for k in intervention_records["records"]}
+        )
+        pre: list[float] = []
+        post: list[float] = []
+        for day, time in pairs:
+            diff = _pair_diff(baseline_records, intervention_records, day, time)
+            # Day-aware window: a record is pre when its day is before the
+            # trigger day, or on the trigger day before the trigger time —
+            # matching _window_key_sets, not clock time alone.
+            is_pre = day < intervention_day or (
+                day == intervention_day and time_to_minute(time) < trigger_minute
+            )
+            (pre if is_pre else post).append(diff)
+        # The per-tick display series keeps its clock-order running max (a
+        # tick that itself never diverges still carries the divergence
+        # reached before it); ticks before the first divergence stay clean.
         times = sorted(
             {k[2] for k in baseline_records["records"]} | {k[2] for k in intervention_records["records"]}
         )
         per_time = {}
-        # The series is a running max over the window up to each tick, so a
-        # tick that itself never diverges (e.g. an unchanged late-night slot)
-        # still carries the divergence reached before it; ticks before the
-        # first divergence stay clean.
         running = 0.0
         for time in times:
             running = max(running, _time_diff(baseline_records, intervention_records, time))
@@ -96,8 +110,6 @@ def compare_arms(baseline_dir, intervention_dir, intervention_day, intervention_
                 "max_abs_diff": running,
                 "window": "post" if time_to_minute(time) >= trigger_minute else "pre",
             }
-        pre = [v["max_abs_diff"] for v in per_time.values() if v["window"] == "pre"]
-        post = [v["max_abs_diff"] for v in per_time.values() if v["window"] == "post"]
     else:
         per_time = None
         pre = [v["max_abs_diff"] for d, v in per_day.items() if d < intervention_day]
@@ -219,8 +231,24 @@ def _time_diff(baseline, intervention, time):
     return mismatches / len(baseline["records"])
 
 
+def _pair_diff(baseline, intervention, day, time):
+    """Mismatched episode records at (day, time-of-day), normalized like
+    :func:`_day_diff` by the baseline arm's full episode count."""
+    if not baseline["records"]:
+        return 0.0
+    b_keys = {k for k in baseline["records"] if k[1] == day and k[2] == time}
+    i_keys = {k for k in intervention["records"] if k[1] == day and k[2] == time}
+    common = b_keys & i_keys
+    if not common:
+        return 0.0
+    mismatches = sum(1 for k in common if baseline["records"][k] != intervention["records"][k])
+    return mismatches / len(baseline["records"])
+
+
 def _effect_verdict(status, windows):
-    if "MISSING" in status.values():
+    if "MISSING" in status.values() or "UNRELIABLE" in status.values():
+        # An arm below MIN_COMPARISON_DAYS/POPULATION is insufficient data,
+        # never evidence of no effect.
         return {"verdict": "insufficient_data", "beneficial": False}
     # Judged on the corrected per-window disagreement rate (explicit window
     # denominator). max_abs_diff stays a raw window diagnostic and never

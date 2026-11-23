@@ -310,8 +310,18 @@ def _action_space_max_tokens() -> int | None:
     Non-positive / unparseable values fall back to the provider default.
     """
     try:
-        raw = int((CONFIG.get("action_space", {}) or {}).get("max_tokens", 512))
+        raw = (CONFIG.get("action_space", {}) or {}).get("max_tokens")
     except (TypeError, ValueError):
+        return None
+    if raw is None:
+        return None
+    try:
+        raw = int(raw)
+    except (TypeError, ValueError):
+        return None
+    # 512 is the shipped default: forward nothing so the provider's own
+    # configured budget applies (only an explicit override is honoured).
+    if raw == 512:
         return None
     return raw if raw > 0 else None
 

@@ -30,12 +30,22 @@ Deterministic only: no LLM, no network, no simulation run.
 
 from __future__ import annotations
 
+import pytest
+
 from gaworld.sim._schedule import (
     ensure_sleep_in_schedule,
     get_activity_for_time,
     is_sleep_activity,
 )
 from gaworld.sim._utils import _build_time_grid
+
+
+# Gated (GREEN phase 1, task 3878): head-of-day coverage is an MCF-realism
+# behavior behind mcf_realism_enabled(); these tests exercise the gate-ON
+# path, default runs keep the pre-change schedule.
+@pytest.fixture(autouse=True)
+def _mcf_realism_on(monkeypatch):
+    monkeypatch.setenv("GAWORLD_MCF_REALISM", "1")
 
 # The pilot archetype template (pilot16 agent_4_schedule.json) minus the
 # 睡前 tail: exactly the shape that produced the 00:00–07:50 hole.

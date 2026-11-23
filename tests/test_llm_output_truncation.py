@@ -168,7 +168,7 @@ class TestChunking(unittest.TestCase):
         calls: list[list[str]] = []
         prompts: list[str] = []
 
-        def fake(prompt, task=None, agent_id=None, provider=None):
+        def fake(prompt, task=None, agent_id=None, provider=None, max_tokens=None):
             import re
             match = re.search(r"活动列表：(.+)", prompt)
             asked = [a.strip() for a in match.group(1).split(", ")] if match else []

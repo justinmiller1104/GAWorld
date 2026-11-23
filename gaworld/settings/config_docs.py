@@ -323,6 +323,7 @@ LABELS_EN: dict[str, str] = {
     "audit_cooldown_days": "Audit cool-down (days)",
     "action_space": "Action space generation",
     "activities_per_call": "Activities asked per call",
+    "action_space.max_tokens": "Action-generation output token cap",
     "personality": "Big Five",
     "channels": "Active channels",
     "rules": "Rules channel",

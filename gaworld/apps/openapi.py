@@ -1813,6 +1813,29 @@ def _mcf() -> dict[str, Any]:
         last_error=STR,
     )
     return {
+        "/api/mcf/meta": {"get": _op(
+            "mcf", "Researcher-facing MCF metadata: gates, empirical targets, objective labels",
+            ok=_obj(("gates", "targets", "objectives", "runner_capabilities"),
+                    gates=_d(OBJ, "min_comparison_days / min_comparison_population"),
+                    targets=_d(OBJ, "time-use survey provenance and per-category minutes"),
+                    objectives=_arr(OBJ),
+                    runner_capabilities=_d(OBJ, "what the leg runner supports in this build")),
+            errors={"501": "benchmark metadata modules not importable in this build"})},
+        "/api/mcf/sample-preview": {"get": _op(
+            "mcf", "Preview a population selection with the same resolution the creation path uses",
+            query=(
+                _q("city", "City bundle slug"),
+                _q("method", "manual / random / all"),
+                _q("agent_ids", "comma-separated resident IDs (method=manual)"),
+                _q("sample_size", "sample size (method=random)"),
+                _q("sample_seed", "sample seed (method=random)"),
+            ),
+            ok=_obj(("city", "method", "agent_ids", "n_agents", "employed_agent_ids"),
+                    city=STR, city_name=STR, method=STR, agent_ids=INT_LIST,
+                    n_agents=NUM, employed_agent_ids=INT_LIST, n_employed=NUM,
+                    unknown_employment=NUM),
+            errors={"400": "Invalid population selection",
+                    "501": "population module not importable in this build"})},
         "/api/mcf/bands": {"get": _op(
             "mcf", "Admissible parameter bands (bounds, dotted paths, sources)",
             ok=_obj(bands=_arr(OBJ)),

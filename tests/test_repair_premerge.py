@@ -31,6 +31,8 @@ from __future__ import annotations
 import json
 import os
 
+from typing import ClassVar
+
 import pytest
 
 from gaworld.apps import mcf_api
@@ -501,3 +503,81 @@ def test_m5_double_launch_is_atomic(mcf_env, monkeypatch):
         "two concurrent launches of the same experiment must yield exactly one "
         "202 and one 409; got %s and %s (%r)" % (first_status, second_status, second_body)
     )
+
+
+# ---------------------------------------------------------------------------
+# M4 - guarded int parsing in _validate_spec (bad JSON types yield 400, not 500)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("n_configs", "many"),
+        ("n_seeds", "lots"),
+        ("seeds", [7, "eleven"]),
+        ("budget", {"max_calls": "heaps"}),
+    ],
+)
+def test_m4_bad_int_types_yield_400(mcf_env, field, value):
+    spec = {
+        "name": "smoke",
+        "architectures": [
+            {"id": "m0", "label": "M0 baseline", "patch": {}},
+            {"id": "m1", "label": "M1 realism", "patch": {}},
+        ],
+        "parameters": [],
+        field: value,
+    }
+    body, status = mcf_api.handle_post("/api/mcf/experiment", spec)
+    assert status == 400, (
+        f"a non-integer {field} must be rejected with 400, not blow up with 500; "
+        f"got {status}: {body!r}"
+    )
+    assert field.replace("budget.", "") in str(body.get("error", "")) or "integer" in str(
+        body.get("error", "")
+    )
+
+
+# ---------------------------------------------------------------------------
+# M6 - policy_events fail-fast at start + type-safe day matching
+# ---------------------------------------------------------------------------
+
+
+def test_m6_validate_rejects_unsupported_operation_before_the_run():
+    from gaworld.kernel.policy_events import validate_policy_events
+
+    with pytest.raises(ValueError) as excinfo:
+        validate_policy_events([{"day": 3, "time": "08:00", "operation": "detonate"}])
+    assert "detonate" in str(excinfo.value)
+    # A valid list passes; description-only legacy entries are fine too.
+    validate_policy_events([{"day": 3, "time": "08:00"}])
+    validate_policy_events([{"day": 3, "time": "08:00", "operation": "set_agent_state"}])
+
+
+def test_m6_day_matching_is_type_coerced():
+    from gaworld.kernel.policy_events import execute_policy_events
+
+    fired_calls: list[str] = []
+
+    class _Controller:
+        def intervene(self, operation, ctx, **kw):
+            fired_calls.append(kw.get("agent_id"))
+            return "ok"
+
+    class _Ctx:
+        agents_by_id: ClassVar[dict] = {7: {"id": 7, "state": {}}}
+        controller = _Controller()
+        recorder = None
+
+    event = {"name": "e", "day": "3", "time": "08:00", "operation": "set_agent_state",
+             "targets": [7], "kwargs": {"mood": "calm"}}
+
+    # A string "3" in the spec and int 3 from the tick loop are the same day.
+    assert execute_policy_events(_Ctx(), [event], 3, "08:00") == 1
+    assert fired_calls == [7]
+
+    # Non-matching days / times still do not fire (regression guard).
+    assert execute_policy_events(_Ctx(), [event], 9, "08:00") == 0
+    assert execute_policy_events(_Ctx(), [event], 3, "09:00") == 0
+    assert fired_calls == [7]

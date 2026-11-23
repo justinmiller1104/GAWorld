@@ -11,6 +11,19 @@ from __future__ import annotations
 _SUPPORTED = {"set_agent_state"}
 
 
+def validate_policy_events(events) -> None:
+    """Fail fast at run start: every declarative entry must use a supported
+    operation. Raises before day 1 instead of aborting a run mid-tick.
+    """
+    for index, event in enumerate(events or []):
+        operation = event.get("operation")
+        if operation and operation not in _SUPPORTED:
+            raise ValueError(
+                f"policy_events[{index}] operation {operation!r} is not supported; "
+                f"supported: {sorted(_SUPPORTED)}"
+            )
+
+
 def execute_policy_events(ctx, events, day, time_str) -> int:
     """Fire the entries whose day/time match this tick; return how many fired.
 
@@ -18,7 +31,7 @@ def execute_policy_events(ctx, events, day, time_str) -> int:
     """
     fired = 0
     for event in events or []:
-        if event.get("day") != day or str(event.get("time", "")) != str(time_str):
+        if str(event.get("day")) != str(day) or str(event.get("time", "")) != str(time_str):
             continue
         operation = event.get("operation")
         if not operation:

@@ -55,9 +55,10 @@ from gaworld.goals import (
 # --------------------------------------------------------------------
 from gaworld.kernel import build_kernel
 from gaworld.kernel import remote as kernel_remote
-from gaworld.kernel.policy_events import execute_policy_events
+from gaworld.kernel.policy_events import execute_policy_events, validate_policy_events
 from gaworld.llm.providers import call_llm
 from gaworld.memory.experience import (
+    close_all_agent_spans,
     load_agent_episodes,
     load_agent_habits,
     load_agent_intentions,
@@ -2330,8 +2331,44 @@ def _resolve_run_seed():
     return _AUTO_SEED, "auto"
 
 
+def _fire_policy_events(sim_ctx, day, time_str):
+    """Phase 2.3: declarative policy entries fire here (audited via
+    Controller.intervene); text-only entries keep the legacy feed. Returns
+    the entry matching this tick (for on_time_tick), with day/time compared
+    type-safely ("3" and 3 are the same day)."""
+    policy = next(
+        (p for p in POLICY_EVENTS if str(p["day"]) == str(day) and str(p["time"]) == str(time_str)),
+        None,
+    )
+    execute_policy_events(sim_ctx, POLICY_EVENTS, day, time_str)
+    return policy
+
+
+def _run_recap(agents, initial_snapshots, state_history, start_day, last_day, env_timeline_path):
+    """End-of-simulation recap: per-agent structured block plus an LLM
+    narrative covering days run, key events, top activities, state /
+    emotion changes, growth deltas, memory + schedule + relationship
+    shifts, and a read on how human-like the run felt. Best-effort: a
+    failure here never reverses successful simulation work."""
+    try:
+        summarize_simulation(
+            agents,
+            initial_snapshots,
+            state_history,
+            start_day,
+            last_day,
+            life_events=list_life_events(CONFIG),
+            env_timeline_path=env_timeline_path,
+            llm_fn=call_llm,
+        )
+    except Exception as exc:  # noqa: BLE001 - summary is best-effort
+        print(f"⚠️ 仿真总结生成失败：{exc}")
+
+
 def run_simulation():
     validate_runtime_config(CONFIG)
+    # Fail fast on malformed policy_events before day 1 (M6), not mid-run.
+    validate_policy_events(POLICY_EVENTS)
     # ====================================================================
     # PHASE BANNERS — added in S3/round 4 as navigation aids for a future
     # extraction of this orchestrator.  Each banner marks the start of a
@@ -3086,6 +3123,10 @@ def run_simulation():
     horizon = _ff_plan_horizon(
         start_day, SIM_DAYS, step_unit, start_date=SIM_START_DATE
     )
+    # The close-out paths read the last tick even when no period runs —
+    # mirror the locals() fallbacks they replaced.
+    day = start_day - 1
+    time_str = "00:00"
     for period in horizon:
         day = period.end_day
         sim_ctx.clock.start_day(day)
@@ -3349,7 +3390,7 @@ def run_simulation():
             sim_ctx.clock.advance(time_str, time_index)
             kernel_remote.drain(sim_ctx)
             step_minutes = _timeline_step_minutes(timeline, time_index)
-            policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None); execute_policy_events(sim_ctx, POLICY_EVENTS, day, time_str)  # Phase 2.3: declarative entries fire here (audited); text-only entries keep the legacy feed
+            policy = _fire_policy_events(sim_ctx, day, time_str)
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
@@ -3676,16 +3717,7 @@ def run_simulation():
                 )
 
     print("\n✅ 模拟完成")
-    # Close every open activity span so the final segment is an explicit row,
-    # not an implicit tail the scorer has to guess at.
-    from gaworld.memory.experience import close_agent_span as _close_agent_span
-
-    for _agent_id in agents_by_id:
-        _close_agent_span(
-            _agent_id,
-            day if "day" in locals() else start_day - 1,
-            time_str if isinstance(locals().get("time_str"), str) else "00:00",
-        )
+    close_all_agent_spans(agents_by_id, day, time_str)
     if visualizer is not None:
         visualizer.finalize()
     hook_bus.emit(
@@ -3712,26 +3744,7 @@ def run_simulation():
         metrics=state_metrics,
     )
 
-    # End-of-simulation recap: per-agent structured block plus an LLM
-    # narrative covering days run, key events, top activities, state /
-    # emotion changes, growth deltas, memory + schedule + relationship
-    # shifts, and a read on how human-like the run felt. Wrapped so a
-    # failure here never reverses successful simulation work.
-    try:
-        last_day = day if "day" in locals() else start_day - 1
-        life_event_log = list_life_events(CONFIG)
-        summarize_simulation(
-            agents,
-            initial_snapshots,
-            state_history,
-            start_day,
-            last_day,
-            life_events=life_event_log,
-            env_timeline_path=env_timeline_path,
-            llm_fn=call_llm,
-        )
-    except Exception as exc:  # noqa: BLE001 - summary is best-effort
-        print(f"⚠️ 仿真总结生成失败：{exc}")
+    _run_recap(agents, initial_snapshots, state_history, start_day, day, env_timeline_path)
 
     # End-of-run manifest (S4). Additive, best-effort: a failure here
     # must never take a successful simulation with it. See

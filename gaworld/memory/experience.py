@@ -154,6 +154,13 @@ def close_agent_span(agent_id, day, time_str, cfg=None):
     _write_span_row(agent_id, open_span, cfg=cfg)
 
 
+def close_all_agent_spans(agents_by_id, day, time_str, cfg=None):
+    """Close every open activity span so the final segment is an explicit row,
+    not an implicit tail the scorer has to guess at."""
+    for agent_id in agents_by_id:
+        close_agent_span(agent_id, day, time_str, cfg=cfg)
+
+
 def prune_and_decay_episodes(agent_id, cfg):
     if not isinstance(cfg, dict):
         cfg = {}

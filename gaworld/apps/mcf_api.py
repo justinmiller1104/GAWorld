@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -35,6 +36,35 @@ _MAX_SEEDS = 32
 
 _JOBS: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
+#: Experiment ids being launched right now — the in-memory half of the
+#: duplicate-launch guard (the on-disk status is only written by _save_exp,
+#: so a concurrent launch would otherwise read a still-draft file).
+_LAUNCHING: set[str] = set()
+
+#: An id is a single path component of a persisted experiment directory.
+#: Reject ``.`` / ``..`` and anything with separators so a crafted id can
+#: never escape ``output/mcf/`` (and the regex itself bans ``/`` and ``\``).
+_EXP_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _valid_exp_id(exp_id: str) -> bool:
+    return (
+        bool(exp_id)
+        and bool(_EXP_ID_RE.match(exp_id))
+        and "/" not in exp_id
+        and "\\" not in exp_id
+        and exp_id not in (".", "..")
+    )
+
+
+def _int_or_none(value: Any, label: str) -> tuple[int | None, str | None]:
+    """Guarded int parse (mirrors the sim_days handling): bad JSON types
+    become a 400 message, not an unhandled ValueError."""
+    try:
+        return int(value), None
+    except (TypeError, ValueError):
+        return None, f"{label} must be an integer"
+
 
 
 def _mcf_root() -> str:
@@ -50,6 +80,8 @@ def _exp_path(root: str, exp_id: str) -> str:
 
 
 def _load_exp(exp_id: str) -> dict[str, Any] | None:
+    if not _valid_exp_id(exp_id):
+        return None
     path = _exp_path(_mcf_root(), exp_id)
     if not os.path.isfile(path):
         return None
@@ -212,9 +244,21 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
 
     objectives = list(payload.get("objectives") or ["paid_work_error", "leisure_social_error"])
 
-    n_configs = max(1, min(int(payload.get("n_configs") or 3), _MAX_CONFIGS))
-    seeds = [int(s) for s in (payload.get("seeds") or [])][:_MAX_SEEDS]
-    n_seeds = int(payload.get("n_seeds") or 0) or len(seeds)
+    n_configs, error = _int_or_none(payload.get("n_configs") or 3, "n_configs")
+    if error:
+        return {}, error
+    seeds = []
+    for raw in payload.get("seeds") or []:
+        seed, error = _int_or_none(raw, "seeds elements")
+        if error:
+            return {}, error
+        seeds.append(seed)
+    seeds = seeds[:_MAX_SEEDS]
+    n_seeds, error = _int_or_none(payload.get("n_seeds") or 0, "n_seeds")
+    if error:
+        return {}, error
+    n_seeds = n_seeds or len(seeds)
+    n_configs = max(1, min(n_configs, _MAX_CONFIGS))
     if n_seeds < 1:
         n_seeds = 1
     defaults = [7 + 4 * i for i in range(n_seeds)]
@@ -232,7 +276,19 @@ def _validate_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]
         return {}, "reference_architecture must be one of the architectures"
 
     budget = dict(payload.get("budget") or {})
-    employed_agent_ids = [int(i) for i in (payload.get("employed_agent_ids") or [])]
+    for key, value in budget.items():
+        if value is None:
+            continue
+        parsed, error = _int_or_none(value, f"budget.{key}")
+        if error:
+            return {}, error
+        budget[key] = parsed
+    employed_agent_ids = []
+    for raw in payload.get("employed_agent_ids") or []:
+        agent_id, error = _int_or_none(raw, "employed_agent_ids elements")
+        if error:
+            return {}, error
+        employed_agent_ids.append(agent_id)
 
     # population + duration: wired to the real runner (benchmark/mcf/population.py
     # resolves and validates the selection against the city's actual roster; the
@@ -350,27 +406,38 @@ def _start_job(exp_id: str) -> None:
 
 
 def launch_experiment(exp_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    if not _valid_exp_id(exp_id):
+        return {"error": "invalid experiment id"}, 400
     exp = _load_exp(exp_id)
     if exp is None:
         return {"error": "unknown experiment"}, 404
-    if exp["status"] == "running":
-        return {"error": "experiment is already running"}, 409
-    estimated = exp["estimated_calls"]
-    if estimated > _COST_CONFIRM_THRESHOLD and not payload.get("confirm_cost"):
-        return (
-            {
-                "error": (
-                    f"estimated {estimated} model calls exceeds the "
-                    f"{_COST_CONFIRM_THRESHOLD}-call guard; retry with confirm_cost=true"
-                ),
-                "estimated_calls": estimated,
-            },
-            400,
-        )
-    exp["status"] = "running"
-    exp["progress"] = {"legs_done": 0, "legs_total": _legs_total(exp), "failures": []}
-    exp["last_error"] = ""
-    _save_exp(exp)
+    # Atomic check-and-mark: the on-disk status is only written by _save_exp,
+    # so the guard pairs it with the in-memory _LAUNCHING marker (both under
+    # _LOCK) — two concurrent POSTs yield one 202 and one 409, never two jobs.
+    with _LOCK:
+        if exp["status"] == "running" or exp_id in _LAUNCHING:
+            return {"error": "experiment is already running"}, 409
+        _LAUNCHING.add(exp_id)
+    try:
+        estimated = exp["estimated_calls"]
+        if estimated > _COST_CONFIRM_THRESHOLD and not payload.get("confirm_cost"):
+            return (
+                {
+                    "error": (
+                        f"estimated {estimated} model calls exceeds the "
+                        f"{_COST_CONFIRM_THRESHOLD}-call guard; retry with confirm_cost=true"
+                    ),
+                    "estimated_calls": estimated,
+                },
+                400,
+            )
+        exp["status"] = "running"
+        exp["progress"] = {"legs_done": 0, "legs_total": _legs_total(exp), "failures": []}
+        exp["last_error"] = ""
+        _save_exp(exp)
+    finally:
+        with _LOCK:
+            _LAUNCHING.discard(exp_id)
     job_id = uuid.uuid4().hex[:8]
     with _LOCK:
         _JOBS[job_id] = {"id": job_id, "experiment": exp_id, "status": "running", "started_at": time.time()}
@@ -912,6 +979,8 @@ def handle_get(path: str, query: dict) -> tuple[dict[str, Any], int]:
         parts = route[len("/api/mcf/experiment/") :].split("/")
         exp_id = parts[0]
         action = parts[1] if len(parts) > 1 else ""
+        if not _valid_exp_id(exp_id) or (action and action not in ("results", "report", "export")):
+            return {"error": "invalid experiment id"}, 400
         if not action:
             return experiment(exp_id)
         if action == "results":
